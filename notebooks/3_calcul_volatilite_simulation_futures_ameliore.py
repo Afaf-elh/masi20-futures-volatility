@@ -567,6 +567,7 @@ def calculer_volatilite_historique(df: pd.DataFrame, fenetre: int = 30, annualis
     except Exception as e:
         logger.error(f"Erreur lors du calcul de la volatilité historique: {e}")
         return df
+PENALITE_CRITERE_POIDS = 5.0
 
 def optimiser_parametres_garch(
     df: pd.DataFrame,
@@ -594,6 +595,7 @@ def optimiser_parametres_garch(
 
         best_scores = {crit: np.inf for crit in criteres}
         best_penalites = {crit: np.inf for crit in criteres}
+        best_metrics = {crit: np.inf for crit in criteres}
         best_params = {crit: (1, 1) for crit in criteres}
         resultats = []
 
@@ -637,38 +639,36 @@ def optimiser_parametres_garch(
                         penalite,
                     )
 
-                    if (
-                        diagnostics.get('convergence') != 0
-                        or not diagnostics['stationnaire']
-                        or not diagnostics['arch_residuels']
-                        or not diagnostics['significatif']
-                    ):
-                        logger.debug(
-                            "Diagnostics invalides pour p=%s, q=%s (stationnaire=%s, significatif=%s, arch=%s, convergence=%s)",
-                            p,
-                            q,
-                            diagnostics['stationnaire'],
-                            diagnostics['significatif'],
-                            diagnostics['arch_residuels'],
-                            diagnostics['convergence'],
-                        )
-                        continue
-
                     for crit in criteres:
                         valeur = scores.get(crit)
                         if valeur is None or not np.isfinite(valeur):
                             continue
+                        composite = penalite * PENALITE_CRITERE_POIDS + valeur
                         if (
-                            penalite < best_penalites[crit]
+                            composite < best_metrics[crit]
                             or (
-                                np.isfinite(penalite)
-                                and np.isfinite(best_penalites[crit])
-                                and np.isclose(penalite, best_penalites[crit])
-                                and valeur < best_scores[crit]
+                                np.isclose(composite, best_metrics[crit])
+                                and (
+                                    penalite < best_penalites[crit]
+                                    or (
+                                        np.isclose(penalite, best_penalites[crit])
+                                        and valeur < best_scores[crit]
+                                    )
+                                )
                             )
                         ):
+                            if diagnostics.get('convergence') != 0:
+                                logger.debug(
+                                    "Ignoré p=%s, q=%s pour %s en raison d'une non convergence (code=%s).",
+                                    p,
+                                    q,
+                                    crit.upper(),
+                                    diagnostics.get('convergence'),
+                                )
+                                continue
                             best_penalites[crit] = penalite
                             best_scores[crit] = valeur
+                            best_metrics[crit] = composite
                             best_params[crit] = (p, q)
                         
                 except Exception as e:
@@ -687,6 +687,7 @@ def optimiser_parametres_garch(
                         fallback = min(
                             candidats,
                             key=lambda item: (
+                                item.get('penalite', np.inf) * PENALITE_CRITERE_POIDS + item.get(crit, np.inf),
                                 item.get('penalite', np.inf),
                                 item.get(crit, np.inf),
                             ),
@@ -695,6 +696,7 @@ def optimiser_parametres_garch(
                     best_params[crit] = (fallback['p'], fallback['q'])
                     best_scores[crit] = fallback.get(crit, np.inf)
                     best_penalites[crit] = fallback.get('penalite', np.inf)
+                    best_metrics[crit] = fallback.get('penalite', np.inf) * PENALITE_CRITERE_POIDS + fallback.get(crit, np.inf)
                     logger.warning(
                         "Utilisation de p=%s, q=%s malgré diagnostics imparfaits (pénalité=%.1f).",
                         fallback['p'],
@@ -879,6 +881,7 @@ def calculer_volatilite_egarch(
         meilleur_result = None
         meilleur_score = np.inf
         meilleur_penalite = np.inf
+        meilleur_metrics = np.inf
         meilleur_params = (p, q)
         essais: List[Dict[str, Any]] = []
 
@@ -908,35 +911,31 @@ def calculer_volatilite_egarch(
                     diagnostics['valide'],
                     penalite,
                 )
-                if (
-                    diagnostics.get('convergence') != 0
-                    or not diagnostics['stationnaire']
-                    or not diagnostics['arch_residuels']
-                    or not diagnostics['significatif']
-                ):
+                if diagnostics.get('convergence', 1) != 0:
                     logger.debug(
-                        "Diagnostics invalides pour EGARCH p=%s, q=%s (stationnaire=%s, significatif=%s, arch=%s, convergence=%s)",
+                        "Diagnostics EGARCH p=%s, q=%s ignorés pour cause de non convergence (code=%s).",
                         cand_p,
                         cand_q,
-                        diagnostics['stationnaire'],
-                        diagnostics['significatif'],
-                        diagnostics['arch_residuels'],
-                        diagnostics['convergence'],
+                        diagnostics.get('convergence'),
                     )
                     continue
-
+                metrique = score + penalite * PENALITE_CRITERE_POIDS
                 if (
-                    penalite < meilleur_penalite
+                    metrique < meilleur_metrique
                     or (
-                        np.isfinite(penalite)
-                        and np.isfinite(meilleur_penalite)
-                        and np.isclose(penalite, meilleur_penalite)
-                        and score < meilleur_score
+                        np.isclose(metrique, meilleur_metrique)
+                        and (penalite < meilleur_penalite
+                        or (
+                            np.isclose(penalite, meilleur_penalite)
+                            and score < meilleur_score
+                            )
+                        )
                     )
                 ):
                     meilleur_score = score
                     meilleur_result = result
                     meilleur_penalite = penalite
+                    meilleur_metrique = metrique
                     meilleur_params = (cand_p, cand_q)
             except Exception as exc:
                 logger.warning(f"Erreur lors de l'ajustement EGARCH p={cand_p}, q={cand_q}: {exc}")
@@ -946,6 +945,7 @@ def calculer_volatilite_egarch(
                 fallback = min(
                     essais,
                     key=lambda item: (
+                        item.get('score', np.inf) + item.get('penalite', np.inf) * PENALITE_CRITERE_POIDS,
                         item.get('penalite', np.inf),
                         item.get('score', np.inf),
                     ),
@@ -954,6 +954,7 @@ def calculer_volatilite_egarch(
                     meilleur_result = fallback['result']
                     meilleur_params = (fallback['p'], fallback['q'])
                     meilleur_penalite = fallback.get('penalite', np.inf)
+                    meilleur_metrique = fallback.get('score', np.inf) + fallback.get('penalite', np.inf) * PENALITE_CRITERE_POIDS
                     logger.warning(
                         "Utilisation de EGARCH(p=%s, q=%s) malgré diagnostics imparfaits (pénalité=%.1f).",
                         fallback['p'],
@@ -1038,6 +1039,7 @@ def calculer_volatilite_gjr_garch(
         meilleur_result = None
         meilleur_score = np.inf
         meilleur_penalite = np.inf
+        meilleur_metrique = np.inf
         meilleur_params = (p, q)
         essais: List[Dict[str, Any]] = []
 
@@ -1047,6 +1049,27 @@ def calculer_volatilite_gjr_garch(
                 result = model.fit(disp='off')
                 diagnostics = evaluer_diagnostics_garch(result)
                 penalite = diagnostics.get('penalite', np.inf)
+                score = getattr(result, critere.lower(), np.inf)
+                metrique = score + penalite * PENALITE_CRITERE_POIDS
+                logger.info(
+                    "GJR-GARCH scores p=%s, q=%s: AIC=%.4f, BIC=%.4f (diagnostics valides=%s, pénalité=%.1f, metrique=%.4f)",
+                    cand_p,
+                    cand_q,
+                    result.aic,
+                    result.bic,
+                    diagnostics['valide'],
+                    penalite,
+                    metrique,
+                )
+                if diagnostics.get('convergence') != 0:
+                    logger.debug(
+                        "Diagnostics GJR-GARCH p=%s, q=%s ignorés pour cause de non convergence (code=%s).",
+                        cand_p,
+                        cand_q,
+                        diagnostics.get('convergence'),
+                    )
+                    continue
+                
                 essais.append(
                     {
                         'p': cand_p,
@@ -1055,47 +1078,27 @@ def calculer_volatilite_gjr_garch(
                         'score': score,
                         'diagnostics': diagnostics,
                         'penalite': penalite,
+                        'metrique': metrique,
                     }
                 )
-                score = getattr(result, critere.lower(), np.inf)
-                logger.info(
-                    "GJR-GARCH scores p=%s, q=%s: AIC=%.4f, BIC=%.4f (diagnostics valides=%s, pénalité=%.1f)",
-                    cand_p,
-                    cand_q,
-                    result.aic,
-                    result.bic,
-                    diagnostics['valide'],
-                    penalite,
-                )
-                if (
-                    diagnostics.get('convergence') != 0
-                    or not diagnostics['stationnaire']
-                    or not diagnostics['arch_residuels']
-                    or not diagnostics['significatif']
-                ):
-                    logger.debug(
-                        "Diagnostics invalides pour GJR-GARCH p=%s, q=%s (stationnaire=%s, significatif=%s, arch=%s, convergence=%s)",
-                        cand_p,
-                        cand_q,
-                        diagnostics['stationnaire'],
-                        diagnostics['significatif'],
-                        diagnostics['arch_residuels'],
-                        diagnostics['convergence'],
-                    )
-                    continue
 
                 if (
-                    penalite < meilleur_penalite
+                    metrique < meilleur_metrique
                     or (
-                        np.isfinite(penalite)
-                        and np.isfinite(meilleur_penalite)
-                        and np.isclose(penalite, meilleur_penalite)
-                        and score < meilleur_score
+                        np.isclose(metrique, meilleur_metrique)
+                        and (
+                            penalite < meilleur_penalite
+                            or (
+                                np.isclose(penalite, meilleur_penalite)
+                                and score < meilleur_score
+                            )
+                        )
                     )
                 ):
                     meilleur_score = score
                     meilleur_result = result
                     meilleur_penalite = penalite
+                    meilleur_metrique = metrique
                     meilleur_params = (cand_p, cand_q)
             except Exception as exc:
                 logger.warning(f"Erreur lors de l'ajustement GJR-GARCH p={cand_p}, q={cand_q}: {exc}")
@@ -1105,14 +1108,16 @@ def calculer_volatilite_gjr_garch(
                 fallback = min(
                     essais,
                     key=lambda item: (
+                        item.get('metrique', np.inf),
                         item.get('penalite', np.inf),
                         item.get('score', np.inf),
                     ),
                 )
-                if np.isfinite(fallback.get('score', np.inf)):
+                if np.isfinite(fallback.get('metrique', np.inf)):
                     meilleur_result = fallback['result']
                     meilleur_params = (fallback['p'], fallback['q'])
                     meilleur_penalite = fallback.get('penalite', np.inf)
+                    meilleur_metrique = fallback.get('metrique', np.inf)
                     logger.warning(
                         "Utilisation de GJR-GARCH(p=%s, q=%s) malgré diagnostics imparfaits (pénalité=%.1f).",
                         fallback['p'],
