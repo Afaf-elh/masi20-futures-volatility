@@ -59,7 +59,6 @@ def main():
     # Créer les répertoires nécessaires
     os.makedirs('data_harmonisee', exist_ok=True)
     os.makedirs('volatilite', exist_ok=True)
-    os.makedirs('analyse_impact', exist_ok=True)
     os.makedirs('analyse_comparative', exist_ok=True)
     os.makedirs('modeles_prediction', exist_ok=True)
     os.makedirs('rapport_final', exist_ok=True)
@@ -70,10 +69,9 @@ def main():
         ('1_exploration_donnees_ameliore.py', "Exploration et compréhension des données"),
         ('2_harmonisation_donnees_ameliore.py', "Harmonisation et préparation des données"),
         ('3_calcul_volatilite_simulation_futures_ameliore.py', "Calcul de la volatilité des indices et simulation des futures sur MASI20"),
-        ('4_analyse_impact_variables_macro_ameliore.py', "Analyse de l'impact des variables macroéconomiques"),
-        ('5_analyse_comparative_ameliore.py', "Analyse comparative avec d'autres marchés émergents"),
-        ('6_modeles_prediction_avances_ameliore.py', "Développement et évaluation des modèles de prédiction"),
-        ('7_visualisations_erreur_ameliore.py', "Génération des visualisations des erreurs")
+        ('4_analyse_comparative_ameliore.py', "Analyse comparative avec d'autres marchés émergents"),
+        ('5_modeles_prediction_avances_ameliore.py', "Développement et évaluation des modèles de prédiction"),
+        ('6_visualisations_erreur_ameliore.py', "Génération des visualisations des erreurs")
     ]
     
     # Exécuter chaque étape

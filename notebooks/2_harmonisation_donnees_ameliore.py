@@ -33,17 +33,13 @@ MASI20_TAUX_DIVIDENDE_ANNUEL = 0.00 # Exemple, à ajuster ou rendre dynamique. L
 
 # Dictionnaire de fréquence par type de fichier
 FREQ_MAPPING = {
-    'gdp': 'Q',
-    'pib': 'Q',
-    'taux': 'M',
-    'inflation': 'M',
+   
     'indice': 'D',
     'future': 'D',
-    'usd': 'D',
-    'eur': 'D'
+   
 }
 
-TYPES_CLOSE_ONLY = {"indice", "future", "usd", "eur"}
+TYPES_CLOSE_ONLY = {"indice", "future"}
 
 ##############################################
 # Fonctions de calendrier pour jours ouvrés Maroc (Exemple simplifié)
@@ -117,8 +113,7 @@ def filtrer_colonnes_close(df, type_fichier):
         if "close" not in df.columns and "price" in df.columns:
             df = df.rename(columns={"price": "close"})
         if "close" in df.columns:
-            suffix = {"indice": "close_indice", "future": "close_future", 
-                      "usd": "close_usd", "eur": "close_euro"}.get(type_fichier, "close")
+            suffix = {"indice": "close_indice", "future": "close_future", }.get(type_fichier, "close")
             df = df[["date", "close"]]
             df = df.rename(columns={"close": suffix})
             return df
@@ -130,26 +125,16 @@ def corriger_noms_colonnes(df, pays):
     rename_map = {
         'close_indice_indice': 'close_indice',
         'close_future_future': 'close_future',
-        'close_usd_usd': 'close_usd',
-        'close_euro_eur': 'close_euro',
-        'taux directeur_taux': 'taux_directeur',
-        'inflation_autre': 'inflation',
         'close_autre': 'close_indice',
         'close_autre_x': 'close_indice',
         'close_autre_y': 'close_indice',
-        'constant prices (zar million)_gdp': 'gdp',
-        'constant prices (inr billion)_gdp': 'gdp',
-        'constant prices (mad million)_gdp': 'gdp',
-        'constant prices (try mille)_gdp': 'gdp',
-        'constant prices (vnd billion)_gdp': 'gdp',
         'rendement_autre': 'rendement'
     }
     return df.rename(columns={col: rename_map.get(col, col) for col in df.columns})
 
 def filtrer_colonnes_finales(df, pays):
     colonnes_souhaitees = [
-        'date', 'inflation', 'gdp', 'close_euro', 'close_usd',
-        'taux_directeur', 'close_indice', 'close_future'
+        'date', 'close_indice', 'close_future'
     ]
     if pays == "maroc":
         colonnes_souhaitees += [

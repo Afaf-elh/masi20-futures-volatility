@@ -9,7 +9,6 @@ from datetime import datetime
 # Paramètres généraux du projet
 PROJET = {
     'titre': 'Prédiction de la volatilité des futures sur MASI20',
-    'description': 'Étude de l\'impact des variables macroéconomiques et benchmarking avec les marchés émergents',
     'periode_debut': '2015-01-01',
     'periode_fin': '2024-12-31',
     'version': '2.1.0',
@@ -21,13 +20,11 @@ CHEMINS = {
     'data': 'data',
     'data_harmonisee': 'data_harmonisee',
     'volatilite': 'volatilite',
-    'analyse_impact': 'analyse_impact',
     'analyse_comparative': 'analyse_comparative',
     'modeles_prediction': 'modeles_prediction',
     'rapport_final': 'rapport_final',
     'visualisations': os.path.join('rapport_final', 'visualisations'),
     'resultats': 'resultats',
-    'impact_macro': 'impact_macro',
     'tableaux_bord': 'tableaux_bord',  # Répertoire pour les tableaux de bord
     'logs': 'logs',  # Nouveau répertoire pour les fichiers de log
     'visualisations_prediction': 'visualisations/prediction',
@@ -78,54 +75,9 @@ PAYS = {
 # Pour chaque pays, créer les sous-répertoires nécessaires
 for pays_info in PAYS.values():
     dossier = pays_info['dossier']
-    for chemin_base in ['data_harmonisee', 'volatilite', 'analyse_impact', 'analyse_comparative', 'modeles_prediction']:
+    for chemin_base in ['data_harmonisee', 'volatilite', 'analyse_comparative', 'modeles_prediction']:
         os.makedirs(os.path.join(CHEMINS[chemin_base], dossier), exist_ok=True)
 
-# Variables macroéconomiques à analyser
-VARIABLES_MACRO = {
-    'taux_directeur': {
-        'nom': 'Taux directeur',
-        'description': 'Taux directeur de la banque centrale',
-        'unite': '%',
-        'source': 'Banque centrale',
-        'frequence': 'Mensuelle'
-    },
-    'inflation': {
-        'nom': 'Inflation',
-        'description': 'Taux d\'inflation',
-        'unite': '%',
-        'source': 'Institut national de statistique',
-        'frequence': 'Mensuelle'
-    },
-    'pib': {
-        'nom': 'PIB',
-        'description': 'Produit Intérieur Brut',
-        'unite': 'Millions USD',
-        'source': 'Banque mondiale',
-        'frequence': 'Trimestrielle'
-    },
-    'gdp': {
-        'nom': 'GDP',
-        'description': 'Gross Domestic Product',
-        'unite': 'Millions USD',
-        'source': 'Banque mondiale',
-        'frequence': 'Trimestrielle'
-    },
-    'close_usd': {
-        'nom': 'CLOSE_USD',
-        'description': 'Cours de clôture en USD',
-        'unite': 'USD',
-        'source': 'Marché des changes',
-        'frequence': 'Quotidienne'
-    },
-    'close_euro': {
-        'nom': 'CLOSE_EURO',
-        'description': 'Cours de clôture en EURO',
-        'unite': 'EUR',
-        'source': 'Marché des changes',
-        'frequence': 'Quotidienne'
-    }
-}
 
 # Paramètres des modèles de volatilité
 MODELES_VOLATILITE = {
@@ -135,34 +87,29 @@ MODELES_VOLATILITE = {
         'fenetre': 30,
         'annualisation': True
     },
-    'ewma': {
-        'nom': 'EWMA',
-        'description': 'Exponentially Weighted Moving Average',
-        'lambda': 0.94,
-        'annualisation': True
-    },
     'garch': {
         'nom': 'GARCH',
         'description': 'Generalized Autoregressive Conditional Heteroskedasticity',
         'p': 1,
         'q': 1,
         'optimisation': True,
-        'p_max': 3,
-        'q_max': 3
+        'annualisation': True
     },
     'egarch': {
         'nom': 'EGARCH',
         'description': 'Exponential GARCH',
         'p': 1,
         'q': 1,
-        'optimisation': True
+        'optimisation': True,
+        'annualisation': True
     },
     'gjr_garch': {
         'nom': 'GJR-GARCH',
         'description': 'Glosten-Jagannathan-Runkle GARCH',
         'p': 1,
         'q': 1,
-        'optimisation': True
+        'optimisation': True,
+        'annualisation': True
     }
 }
 
@@ -385,36 +332,6 @@ MODELES_ML = {
     }
 }
 
-# Paramètres pour l'analyse d'impact des variables macroéconomiques
-ANALYSE_IMPACT = {
-    'correlation': {
-        'nom': 'Analyse de corrélation',
-        'description': 'Analyse de la corrélation entre volatilité et variables macroéconomiques',
-        'methodes': ['pearson', 'spearman']
-    },
-    'causalite_granger': {
-        'nom': 'Test de causalité de Granger',
-        'description': 'Test de causalité entre volatilité et variables macroéconomiques',
-        'max_lag': 12,
-        'seuil_significativite': 0.05
-    },
-    'var': {
-        'nom': 'Modèle VAR',
-        'description': 'Vector Autoregression pour analyser les interactions',
-        'max_lag': 12,
-        'selection_lag': 'aic'
-    },
-    'var_x': {
-        'nom': 'Modèle VAR-X',
-        'description': 'Vector Autoregression avec variables exogènes',
-        'max_lag': 4
-    },
-    'cointegration': {
-        'nom': 'Analyse de cointégration',
-        'description': 'Test de cointégration entre volatilité et variables macroéconomiques',
-        'methode': 'johansen'
-    }
-}
 
 # Paramètres pour l'analyse comparative
 ANALYSE_COMPARATIVE = {
@@ -540,7 +457,6 @@ TABLEAU_BORD = {
     'sections': [
         'Aperçu global',
         'Volatilité par pays',
-        'Impact macroéconomique',
         'Analyse comparative',
         'Prédictions'
     ],
