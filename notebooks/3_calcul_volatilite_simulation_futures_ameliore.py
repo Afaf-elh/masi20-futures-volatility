@@ -66,7 +66,10 @@ def tracer_volatilite_individuelle(df: pd.DataFrame, pays: str, col_name: str, m
     
     # Titre et chemin de sauvegarde
     titre = f"Volatilité {method_name} - {PAYS[pays]['indice']}"
-    chemin_sauvegarde = os.path.join(output_dir, f"volatilite_{col_name.split('_')[-1]}.png")
+    # Utiliser le suffixe complet après "volatilite_" pour éviter les collisions (ex: 'gjr_garch' vs 'garch')
+    suffix = col_name.replace('volatilite_', '').strip('_')
+    suffix = suffix.replace(' ', '_')
+    chemin_sauvegarde = os.path.join(output_dir, f"volatilite_{suffix}.png")
     
     # Utiliser la fonction utilitaire pour tracer et sauvegarder
     tracer_volatilite(df, col_name, titre, chemin_sauvegarde)
@@ -123,7 +126,7 @@ def tracer_volatilite_individuelle(df: pd.DataFrame, pays: str, col_name: str, m
     )
     
     # Sauvegarder la version interactive
-    chemin_interactif = os.path.join(output_dir, f"volatilite_{col_name.split('_')[-1]}_interactif.html")
+    chemin_interactif = os.path.join(output_dir, f"volatilite_{suffix}_interactif.html")
     fig.write_html(chemin_interactif)
     
     logger.info(f"Graphique de volatilité {method_name} pour {PAYS[pays]['nom']} sauvegardé dans {chemin_sauvegarde} et {chemin_interactif}")
@@ -168,7 +171,10 @@ def tracer_futures_individuelle(df: pd.DataFrame, pays: str, col_name: str, meth
     plt.tight_layout()
     
     # Sauvegarder le graphique
-    output_file = os.path.join(output_dir, f"future_{col_name.split('_')[-1]}.png")
+    # Utiliser le suffixe complet après "future_" pour éviter les collisions
+    suffix = col_name.replace('future_', '').strip('_')
+    suffix = suffix.replace(' ', '_')
+    output_file = os.path.join(output_dir, f"future_{suffix}.png")
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close()
     
@@ -241,7 +247,7 @@ def tracer_futures_individuelle(df: pd.DataFrame, pays: str, col_name: str, meth
     )
     
     # Sauvegarder la version interactive
-    output_file_interactive = os.path.join(output_dir, f"future_{col_name.split('_')[-1]}_interactif.html")
+    output_file_interactive = os.path.join(output_dir, f"future_{suffix}_interactif.html")
     fig.write_html(output_file_interactive)
     
     logger.info(f"Graphique de simulation des futures {method_name} pour {PAYS[pays]['nom']} sauvegardé dans {output_file} et {output_file_interactive}")
@@ -269,7 +275,7 @@ def charger_donnees_pays(pays: str) -> Optional[pd.DataFrame]:
         df = pd.read_csv(file_path, parse_dates=['date'])
         
         # Nettoyer et convertir les colonnes numériques
-        numeric_cols = ['close_indice', 'close_future', 'inflation', 'gdp', 'close_euro', 'close_usd', 'taux_directeur']
+        numeric_cols = ['close_indice', 'close_future']
         for col in numeric_cols:
             if col in df.columns:
                 # Supprimer les guillemets et les virgules des milliers
@@ -399,69 +405,9 @@ def calculer_volatilite_historique(df: pd.DataFrame, fenetre: int = 30, annualis
         logger.error(f"Erreur lors du calcul de la volatilité historique: {e}")
         return df
 
-
-def calculer_volatilite_ewma(df: pd.DataFrame, lambda_param: float = 0.94, annualisation: bool = True) -> pd.DataFrame:
+def optimiser_parametres_garch(df: pd.DataFrame, p_max: int = 10, q_max: int = 10) -> Tuple[int, int]:
     """
-    Calcule la volatilité EWMA (Exponentially Weighted Moving Average).
-    
-    Args:
-        df: DataFrame contenant une colonne 'rendement'
-        lambda_param: Paramètre de lissage (0 < lambda < 1)
-        annualisation: Si True, annualise la volatilité
-        
-    Returns:
-        DataFrame avec une colonne 'volatilite_ewma' ajoutée
-    """
-    try:
-        if 'rendement' not in df.columns:
-            logger.warning("La colonne 'rendement' n'existe pas dans le DataFrame.")
-            return df
-        
-        df_copy = df.copy()
-        
-        # Calculer les rendements au carré
-        rendements_carres = df_copy['rendement'] ** 2
-        
-        # Initialiser la volatilité EWMA avec la variance des 30 premiers jours
-        variance_init = rendements_carres.iloc[:30].mean() if len(rendements_carres) >= 30 else rendements_carres.mean()
-        
-        # Calculer la volatilité EWMA de manière récursive
-        volatilite_ewma = np.zeros(len(df_copy))
-        volatilite_ewma[0] = np.sqrt(variance_init)
-        
-        for t in range(1, len(df_copy)):
-            if pd.notna(rendements_carres.iloc[t-1]) and pd.notna(volatilite_ewma[t-1]):
-                variance_t = lambda_param * (volatilite_ewma[t-1] ** 2) + (1 - lambda_param) * rendements_carres.iloc[t-1]
-                volatilite_ewma[t] = np.sqrt(variance_t)
-            else:
-                volatilite_ewma[t] = volatilite_ewma[t-1] if t > 0 else np.sqrt(variance_init)
-        
-        df_copy['volatilite_ewma'] = volatilite_ewma
-        
-        # Annualiser la volatilité si demandé
-        if annualisation:
-            df_copy['volatilite_ewma'] = df_copy['volatilite_ewma'] * np.sqrt(252)
-        
-        # Détecter les valeurs aberrantes si configuré
-        if VALEURS_ABERRANTES.get('analyse_separee', False):
-            df_copy = detecter_valeurs_aberrantes(
-                df_copy, 
-                'volatilite_ewma', 
-                methode=VALEURS_ABERRANTES.get('methode', 'zscore'),
-                seuil=VALEURS_ABERRANTES.get('seuil', 3.0),
-                traitement=VALEURS_ABERRANTES.get('traitement', 'marquer')
-            )
-        
-        return df_copy
-    
-    except Exception as e:
-        logger.error(f"Erreur lors du calcul de la volatilité EWMA: {e}")
-        return df
-
-
-def optimiser_parametres_garch(df: pd.DataFrame, p_max: int = 3, q_max: int = 3) -> Tuple[int, int]:
-    """
-    Optimise les paramètres p et q du modèle GARCH.
+    Optimise les paramètres p et q du modèle GARCH en utilisant AIC et BIC.
     
     Args:
         df: DataFrame contenant une colonne 'rendement'
@@ -469,7 +415,7 @@ def optimiser_parametres_garch(df: pd.DataFrame, p_max: int = 3, q_max: int = 3)
         q_max: Ordre maximal pour q
         
     Returns:
-        Tuple (p, q) optimisé
+        Tuple (p, q) optimisé basé sur le critère AIC ou BIC
     """
     try:
         if 'rendement' not in df.columns:
@@ -484,27 +430,37 @@ def optimiser_parametres_garch(df: pd.DataFrame, p_max: int = 3, q_max: int = 3)
             return (1, 1)
         
         best_aic = np.inf
+        best_bic = np.inf
         best_p, best_q = 1, 1
         
+        # Tester toutes les combinaisons de p et q
         for p in range(1, p_max + 1):
             for q in range(1, q_max + 1):
                 try:
                     model = arch_model(rendements, vol='Garch', p=p, q=q, rescale=False)
                     result = model.fit(disp='off')
-                    aic = result.aic
                     
+                    # Calculer AIC et BIC
+                    aic = result.aic
+                    bic = result.bic
+                    
+                    # Afficher les valeurs AIC et BIC pour chaque combinaison p et q
+                    logger.info(f"AIC pour p={p}, q={q}: {aic}")
+                    logger.info(f"BIC pour p={p}, q={q}: {bic}")
+                    
+                    # Comparer l'AIC et le BIC pour choisir les meilleurs paramètres
                     if aic < best_aic:
                         best_aic = aic
+                        best_p, best_q = p, q
+                    
+                    if bic < best_bic:
+                        best_bic = bic
                         best_p, best_q = p, q
                         
                 except Exception as e:
                     logger.warning(f"Erreur lors de l'ajustement du modèle avec p={p}, q={q}: {e}")
         
-        if best_aic == np.inf:
-            logger.warning("Aucun modèle n'a pu être ajusté. Utilisation des valeurs par défaut p=1, q=1.")
-            return (1, 1)
-        
-        logger.info(f"Paramètres GARCH optimisés: p={best_p}, q={best_q}")
+        logger.info(f"Paramètres optimisés - AIC: p={best_p}, q={best_q}, BIC: p={best_p}, q={best_q}")
         return (best_p, best_q)
     
     except Exception as e:
@@ -513,7 +469,7 @@ def optimiser_parametres_garch(df: pd.DataFrame, p_max: int = 3, q_max: int = 3)
 
 
 def calculer_volatilite_garch(df: pd.DataFrame, p: int = 1, q: int = 1, optimisation: bool = True, 
-                             p_max: int = 3, q_max: int = 3, annualisation: bool = True) -> pd.DataFrame:
+                             p_max: int = 10, q_max: int = 10, annualisation: bool = True) -> pd.DataFrame:
     """
     Calcule la volatilité avec un modèle GARCH.
     
@@ -1164,7 +1120,7 @@ def sauvegarder_resultats_volatilite(df: pd.DataFrame, pays: str) -> None:
         output_file = os.path.join(output_dir, "resultats_volatilite.csv")
         
         # Sélectionner les colonnes à sauvegarder
-        cols_to_save = ['close_indice', 'close_future', 'rendement', 'inflation', 'taux_directeur', 'close_usd', 'close_euro', 'gdp']
+        cols_to_save = ['close_indice', 'close_future', 'rendement']
         cols_to_save.extend([col for col in df.columns if col.startswith('volatilite_')])
         cols_to_save.extend([col for col in df.columns if col.startswith('future_')])
         
@@ -1358,15 +1314,7 @@ def main():
             )
             tracer_volatilite_individuelle(df, pays, 'volatilite_historique', 'Historique')
             
-            # Volatilité EWMA
-            params_ewma = MODELES_VOLATILITE['ewma']
-            df = calculer_volatilite_ewma(
-                df, 
-                lambda_param=params_ewma['lambda'], 
-                annualisation=params_ewma['annualisation']
-            )
-            tracer_volatilite_individuelle(df, pays, 'volatilite_ewma', 'EWMA')
-            
+          
             # Volatilité GARCH
             params_garch = MODELES_VOLATILITE['garch']
             df = calculer_volatilite_garch(
@@ -1374,8 +1322,8 @@ def main():
                 p=params_garch['p'], 
                 q=params_garch['q'], 
                 optimisation=params_garch['optimisation'],
-                p_max=params_garch.get('p_max', 3),
-                q_max=params_garch.get('q_max', 3),
+                p_max=params_garch.get('p_max', 10),
+                q_max=params_garch.get('q_max', 10),
                 annualisation=params_garch.get('annualisation', True)
             )
             tracer_volatilite_individuelle(df, pays, 'volatilite_garch', 'GARCH')
