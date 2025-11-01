@@ -287,53 +287,108 @@ def obtenir_colonne_rendements(df: pd.DataFrame) -> Optional[str]:
     return None
 
 
-def verifier_diagnostics_garch(result, nom_modele: str, alpha: float = 0.05) -> None:
-    """Effectue des diagnostics de base sur les résidus et les paramètres estimés."""
+def evaluer_diagnostics_garch(result, alpha: float = 0.05) -> Dict[str, Any]:
+    """Calcule les diagnostics clés d'un modèle GARCH et retourne leur statut."""
+    diagnostics: Dict[str, Any] = {
+        'stationnaire': True,
+        'somme_alpha_beta': np.nan,
+        'significatif': True,
+        'parametres_insignificatifs': [],
+        'arch_residuels': True,
+        'pvalue_ljungbox': np.nan,
+        'convergence': getattr(result, 'convergence', 0),
+    }
     try:
         params = result.params
-        if params is None:
-            logger.warning(f"Diagnostics indisponibles pour {nom_modele}: aucun paramètre estimé.")
-            return
-
-        alpha_terms = [params[idx] for idx in params.index if idx.lower().startswith('alpha')]
-        beta_terms = [params[idx] for idx in params.index if idx.lower().startswith('beta')]
-        if alpha_terms or beta_terms:
-            somme_stabilite = sum(alpha_terms) + sum(beta_terms)
-            if somme_stabilite >= 1:
-                logger.warning(
-                    f"Condition de stationnarité violée pour {nom_modele}: somme(alpha)+somme(beta) = {somme_stabilite:.3f}"
-                )
-            else:
-                logger.info(
-                    f"Condition alpha+beta<1 respectée pour {nom_modele} (somme = {somme_stabilite:.3f})."
-                )
-
-        insignifiants = [name for name, pval in result.pvalues.items() if pval > alpha]
-        if insignifiants:
-            logger.warning(
-                f"Paramètres non significatifs détectés pour {nom_modele} (p-value > {alpha}): {', '.join(insignifiants)}"
-            )
+        if params is not None:
+            alpha_terms = [params[idx] for idx in params.index if idx.lower().startswith('alpha')]
+            beta_terms = [params[idx] for idx in params.index if idx.lower().startswith('beta')]
+            if alpha_terms or beta_terms:
+                somme_stabilite = float(sum(alpha_terms) + sum(beta_terms))
+                diagnostics['somme_alpha_beta'] = somme_stabilite
+                diagnostics['stationnaire'] = somme_stabilite < 0.999
         else:
-            logger.info(f"Tous les paramètres estimés pour {nom_modele} sont significatifs au seuil {alpha}.")
+            diagnostics['stationnaire'] = False
+
+        pvalues = result.pvalues
+        if pvalues is not None:
+            diagnostics['parametres_insignificatifs'] = [name for name, pval in pvalues.items() if pval > alpha]
+            diagnostics['significatif'] = len(diagnostics['parametres_insignificatifs']) == 0
+        else:
+            diagnostics['significatif'] = False
 
         resid = result.resid.dropna()
         if len(resid) > 10:
             lb_result = acorr_ljungbox(resid ** 2, lags=[10], return_df=True)
-            pvalue = lb_result['lb_pvalue'].iloc[0]
-            if pvalue < alpha:
-                logger.warning(
-                    f"Effets ARCH résiduels détectés pour {nom_modele} (p-value Ljung-Box = {pvalue:.3f})."
-                )
-            else:
-                logger.info(
-                    f"Absence d'effets ARCH résiduels détectée pour {nom_modele} (p-value Ljung-Box = {pvalue:.3f})."
-                )
+            pvalue = float(lb_result['lb_pvalue'].iloc[0])
+            diagnostics['pvalue_ljungbox'] = pvalue
+            diagnostics['arch_residuels'] = pvalue >= alpha
+        else:
+            diagnostics['arch_residuels'] = True  # échantillon trop court, ne pas invalider automatiquement
+
+    except Exception:
+        diagnostics['stationnaire'] = False
+        diagnostics['significatif'] = False
+        diagnostics['arch_residuels'] = False
+
+    penalite = 0.0
+    if diagnostics['convergence'] != 0:
+        penalite += 10.0
+    if not diagnostics['stationnaire']:
+        penalite += 5.0
+    if not diagnostics['significatif']:
+        penalite += max(1.0, float(len(diagnostics['parametres_insignificatifs'])))
+    if not diagnostics['arch_residuels']:
+        penalite += 1.0
+
+    diagnostics['penalite'] = penalite
+    diagnostics['valide'] = diagnostics['convergence'] == 0 and diagnostics['stationnaire']
+    return diagnostics
+
+
+def verifier_diagnostics_garch(result, nom_modele: str, alpha: float = 0.05) -> Dict[str, Any]:
+    """Effectue et journalise les diagnostics principaux d'un modèle GARCH."""
+    diagnostics = evaluer_diagnostics_garch(result, alpha)
+
+    somme = diagnostics.get('somme_alpha_beta')
+    if not np.isnan(somme):
+        if diagnostics['stationnaire']:
+            logger.info(
+                f"Condition alpha+beta<1 respectée pour {nom_modele} (somme = {somme:.3f})."
+            )
         else:
             logger.warning(
-                f"Échantillon insuffisant pour appliquer le test de Ljung-Box sur les résidus de {nom_modele}."
+                f"Condition de stationnarité violée pour {nom_modele}: somme(alpha)+somme(beta) = {somme:.3f}"
             )
-    except Exception as exc:
-        logger.warning(f"Impossible de réaliser les diagnostics pour {nom_modele}: {exc}")
+        insignifiants = diagnostics.get('parametres_insignificatifs', [])
+    if insignifiants:
+        logger.warning(
+            f"Paramètres non significatifs détectés pour {nom_modele} (p-value > {alpha}): {', '.join(insignifiants)}"
+        )
+    else:
+        logger.info(f"Tous les paramètres estimés pour {nom_modele} sont significatifs au seuil {alpha}.")
+
+    pvalue = diagnostics.get('pvalue_ljungbox')
+    if not np.isnan(pvalue):
+        if diagnostics['arch_residuels']:
+            logger.info(
+                f"Absence d'effets ARCH résiduels détectée pour {nom_modele} (p-value Ljung-Box = {pvalue:.3f})."
+            )
+        else:
+            logger.warning(
+                f"Effets ARCH résiduels détectés pour {nom_modele} (p-value Ljung-Box = {pvalue:.3f})."
+            )
+    else:
+        logger.info(
+            f"Échantillon insuffisant pour appliquer le test de Ljung-Box sur les résidus de {nom_modele}."
+        )
+
+    if diagnostics['convergence'] != 0:
+        logger.warning(
+            f"L'optimiseur n'a pas convergé pour {nom_modele} (code de convergence = {diagnostics['convergence']})."
+        )
+
+    return diagnostics
 
 def charger_donnees_pays(pays: str) -> Optional[pd.DataFrame]:
     """
@@ -533,6 +588,7 @@ def optimiser_parametres_garch(
             return {crit: (1, 1) for crit in criteres}, []
 
         best_scores = {crit: np.inf for crit in criteres}
+        best_penalites = {crit: np.inf for crit in criteres}
         best_params = {crit: (1, 1) for crit in criteres}
         resultats = []
 
@@ -540,22 +596,71 @@ def optimiser_parametres_garch(
             for q in range(0, q_max + 1):
                 if p == 0 and q == 0:
                     continue
+                if p == 0:
+                    # Le backend arch impose p>0 pour les spécifications GARCH standard
+                    if q == 0:
+                        continue
+                    logger.debug(
+                        "Specification GARCH avec p=0 non supportée par la bibliothèque arch; saut du couple p=0, q=%s.",
+                        q,
+                    )
+                    continue
                 try:
                     model = arch_model(rendements, vol='Garch', p=p, q=q, rescale=True)
                     result = model.fit(disp='off')
                     
+                    diagnostics = evaluer_diagnostics_garch(result)
+                    penalite = diagnostics.get('penalite', np.inf)
                     scores = {
                         'aic': result.aic,
-                        'bic': result.bic
+                        'bic': result.bic,
+                        'diagnostic_valide': diagnostics['valide'],
+                        'somme_alpha_beta': diagnostics.get('somme_alpha_beta'),
+                        'pvalue_ljungbox': diagnostics.get('pvalue_ljungbox'),
+                        'insignificatifs': diagnostics.get('parametres_insignificatifs', []),
+                        'convergence': diagnostics.get('convergence'),
+                        'penalite': penalite,
                     }
                     resultats.append({'p': p, 'q': q, **scores})
-                    logger.info(f"Scores pour p={p}, q={q}: AIC={scores['aic']:.4f}, BIC={scores['bic']:.4f}")
+                    logger.info(
+                        "Scores pour p=%s, q=%s: AIC=%.4f, BIC=%.4f (diagnostics valides=%s, pénalité=%.1f)",
+                        p,
+                        q,
+                        scores['aic'],
+                        scores['bic'],
+                        diagnostics['valide'],
+                        penalite,
+                    )
+
+                    if diagnostics.get('convergence') != 0:
+                        continue
+
+                    if not diagnostics['stationnaire']:
+                        logger.debug(
+                            "Diagnostics invalides pour p=%s, q=%s (stationnaire=%s, significatif=%s, arch=%s, convergence=%s)",
+                            p,
+                            q,
+                            diagnostics['stationnaire'],
+                            diagnostics['significatif'],
+                            diagnostics['arch_residuels'],
+                            diagnostics['convergence'],
+                        )
+                        continue
 
                     for crit in criteres:
                         valeur = scores.get(crit)
-                        if valeur is None:
+                        if valeur is None or not np.isfinite(valeur):
                             continue
-                        if valeur < best_scores[crit]:
+                        if (
+                            penalite < best_penalites[crit]
+                            or (
+                                np.isfinite(penalite)
+                                and np.isfinite(best_penalites[crit])
+                                and np.isclose(penalite, best_penalites[crit])
+                                and valeur < best_scores[crit]
+                            )
+                        ):
+                            best_penalites[crit] = penalite
                             best_scores[crit] = valeur
                             best_params[crit] = (p, q)
                         
@@ -563,7 +668,38 @@ def optimiser_parametres_garch(
                     logger.warning(f"Erreur lors de l'ajustement du modèle avec p={p}, q={q}: {e}")
         
         for crit in criteres:
-            logger.info(f"Meilleurs paramètres selon {crit.upper()} : p={best_params[crit][0]}, q={best_params[crit][1]}")
+            if not np.isfinite(best_penalites[crit]):
+                logger.warning(
+                    "Aucun couple (p, q) n'a validé les diagnostics selon %s. Sélection de la meilleure alternative disponible.",
+                    crit.upper(),
+                )
+                fallback = None
+                if resultats:
+                    candidats = [res for res in resultats if np.isfinite(res.get(crit, np.inf))]
+                    if candidats:
+                        fallback = min(
+                            candidats,
+                            key=lambda item: (
+                                item.get('penalite', np.inf),
+                                item.get(crit, np.inf),
+                            ),
+                        )
+                if fallback:
+                    best_params[crit] = (fallback['p'], fallback['q'])
+                    best_scores[crit] = fallback.get(crit, np.inf)
+                    best_penalites[crit] = fallback.get('penalite', np.inf)
+                    logger.warning(
+                        "Utilisation de p=%s, q=%s malgré diagnostics imparfaits (pénalité=%.1f).",
+                        fallback['p'],
+                        fallback['q'],
+                        fallback.get('penalite', np.inf),
+                    )
+                else:
+                    best_params[crit] = (1, 1)
+            else:
+                logger.info(
+                    f"Meilleurs paramètres selon {crit.upper()} : p={best_params[crit][0]}, q={best_params[crit][1]}"
+                )
 
         return best_params, resultats
     
@@ -590,7 +726,14 @@ def rechercher_parametres_garch_topk(
         critere = 'aic'
 
 
-    resultats_tries = sorted(resultats, key=lambda item: item[critere])
+    resultats_valides = [item for item in resultats if item.get('diagnostic_valide')]
+    if resultats_valides:
+        source_tri = resultats_valides
+    else:
+        choix = best_params_map.get(critere, (1, 1))
+        return choix, [choix]
+
+    resultats_tries = sorted(source_tri, key=lambda item: item[critere])
     top_pairs = [(item['p'], item['q']) for item in resultats_tries[:max(1, top_k)]]
     meilleur = top_pairs[0]
     return meilleur, top_pairs
@@ -725,24 +868,86 @@ def calculer_volatilite_egarch(
 
         meilleur_result = None
         meilleur_score = np.inf
+        meilleur_penalite = np.inf
         meilleur_params = (p, q)
+        essais: List[Dict[str, Any]] = []
 
         for cand_p, cand_q in recherche:
             try:
                 model = arch_model(rendements, vol='EGARCH', p=cand_p, q=cand_q, rescale=True)
                 result = model.fit(disp='off')
+                diagnostics = evaluer_diagnostics_garch(result)
+                penalite = diagnostics.get('penalite', np.inf)
+                essais.append(
+                    {
+                        'p': cand_p,
+                        'q': cand_q,
+                        'result': result,
+                        'score': score,
+                        'diagnostics': diagnostics,
+                        'penalite': penalite,
+                    }
+                )
                 score = getattr(result, critere.lower(), np.inf)
-                logger.info(f"EGARCH scores p={cand_p}, q={cand_q}: AIC={result.aic:.4f}, BIC={result.bic:.4f}")
-                if score < meilleur_score:
+                logger.info(
+                    "EGARCH scores p=%s, q=%s: AIC=%.4f, BIC=%.4f (diagnostics valides=%s, pénalité=%.1f)",
+                    cand_p,
+                    cand_q,
+                    result.aic,
+                    result.bic,
+                    diagnostics['valide'],
+                    penalite,
+                )
+                if diagnostics.get('convergence') != 0 or not diagnostics['stationnaire']:
+                    logger.debug(
+                        "Diagnostics invalides pour EGARCH p=%s, q=%s (stationnaire=%s, significatif=%s, arch=%s, convergence=%s)",
+                        cand_p,
+                        cand_q,
+                        diagnostics['stationnaire'],
+                        diagnostics['significatif'],
+                        diagnostics['arch_residuels'],
+                        diagnostics['convergence'],
+                    )
+                    continue
+
+                if (
+                    penalite < meilleur_penalite
+                    or (
+                        np.isfinite(penalite)
+                        and np.isfinite(meilleur_penalite)
+                        and np.isclose(penalite, meilleur_penalite)
+                        and score < meilleur_score
+                    )
+                ):
                     meilleur_score = score
                     meilleur_result = result
+                    meilleur_penalite = penalite
                     meilleur_params = (cand_p, cand_q)
             except Exception as exc:
                 logger.warning(f"Erreur lors de l'ajustement EGARCH p={cand_p}, q={cand_q}: {exc}")
 
         if meilleur_result is None:
-            logger.warning("Aucun ajustement EGARCH concluant n'a été trouvé.")
-            return df_copy
+            if essais:
+                fallback = min(
+                    essais,
+                    key=lambda item: (
+                        item.get('penalite', np.inf),
+                        item.get('score', np.inf),
+                    ),
+                )
+                if np.isfinite(fallback.get('score', np.inf)):
+                    meilleur_result = fallback['result']
+                    meilleur_params = (fallback['p'], fallback['q'])
+                    meilleur_penalite = fallback.get('penalite', np.inf)
+                    logger.warning(
+                        "Utilisation de EGARCH(p=%s, q=%s) malgré diagnostics imparfaits (pénalité=%.1f).",
+                        fallback['p'],
+                        fallback['q'],
+                        meilleur_penalite,
+                    )
+            if meilleur_result is None:
+                logger.warning("Aucun ajustement EGARCH concluant n'a été trouvé.")
+                return df_copy
 
         verifier_diagnostics_garch(meilleur_result, f"EGARCH(p={meilleur_params[0]}, q={meilleur_params[1]})")
 
@@ -817,24 +1022,86 @@ def calculer_volatilite_gjr_garch(
 
         meilleur_result = None
         meilleur_score = np.inf
+        meilleur_penalite = np.inf
         meilleur_params = (p, q)
+        essais: List[Dict[str, Any]] = []
 
         for cand_p, cand_q in recherche:
             try:
                 model = arch_model(rendements, vol='GARCH', p=cand_p, q=cand_q, o=1, power=2.0, rescale=True)
                 result = model.fit(disp='off')
+                diagnostics = evaluer_diagnostics_garch(result)
+                penalite = diagnostics.get('penalite', np.inf)
+                essais.append(
+                    {
+                        'p': cand_p,
+                        'q': cand_q,
+                        'result': result,
+                        'score': score,
+                        'diagnostics': diagnostics,
+                        'penalite': penalite,
+                    }
+                )
                 score = getattr(result, critere.lower(), np.inf)
-                logger.info(f"GJR-GARCH scores p={cand_p}, q={cand_q}: AIC={result.aic:.4f}, BIC={result.bic:.4f}")
-                if score < meilleur_score:
+                logger.info(
+                    "GJR-GARCH scores p=%s, q=%s: AIC=%.4f, BIC=%.4f (diagnostics valides=%s, pénalité=%.1f)",
+                    cand_p,
+                    cand_q,
+                    result.aic,
+                    result.bic,
+                    diagnostics['valide'],
+                    penalite,
+                )
+                if diagnostics.get('convergence') != 0 or not diagnostics['stationnaire']:
+                    logger.debug(
+                        "Diagnostics invalides pour GJR-GARCH p=%s, q=%s (stationnaire=%s, significatif=%s, arch=%s, convergence=%s)",
+                        cand_p,
+                        cand_q,
+                        diagnostics['stationnaire'],
+                        diagnostics['significatif'],
+                        diagnostics['arch_residuels'],
+                        diagnostics['convergence'],
+                    )
+                    continue
+
+                if (
+                    penalite < meilleur_penalite
+                    or (
+                        np.isfinite(penalite)
+                        and np.isfinite(meilleur_penalite)
+                        and np.isclose(penalite, meilleur_penalite)
+                        and score < meilleur_score
+                    )
+                ):
                     meilleur_score = score
                     meilleur_result = result
+                    meilleur_penalite = penalite
                     meilleur_params = (cand_p, cand_q)
             except Exception as exc:
                 logger.warning(f"Erreur lors de l'ajustement GJR-GARCH p={cand_p}, q={cand_q}: {exc}")
 
         if meilleur_result is None:
-            logger.warning("Aucun ajustement GJR-GARCH concluant n'a été trouvé.")
-            return df_copy
+            if essais:
+                fallback = min(
+                    essais,
+                    key=lambda item: (
+                        item.get('penalite', np.inf),
+                        item.get('score', np.inf),
+                    ),
+                )
+                if np.isfinite(fallback.get('score', np.inf)):
+                    meilleur_result = fallback['result']
+                    meilleur_params = (fallback['p'], fallback['q'])
+                    meilleur_penalite = fallback.get('penalite', np.inf)
+                    logger.warning(
+                        "Utilisation de GJR-GARCH(p=%s, q=%s) malgré diagnostics imparfaits (pénalité=%.1f).",
+                        fallback['p'],
+                        fallback['q'],
+                        meilleur_penalite,
+                    )
+            if meilleur_result is None:
+                logger.warning("Aucun ajustement GJR-GARCH concluant n'a été trouvé.")
+                return df_copy
 
         verifier_diagnostics_garch(meilleur_result, f"GJR-GARCH(p={meilleur_params[0]}, q={meilleur_params[1]})")
 
