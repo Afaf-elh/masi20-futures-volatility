@@ -171,7 +171,7 @@ def standardiser_format_date(df: pd.DataFrame, colonne_date: str) -> pd.DataFram
         # Si la colonne est de type object, retirer d'éventuels guillemets et espaces
         if df_copy[colonne_date].dtype == object:
             # Supprimer les guillemets et les espaces
-            df_copy[colonne_date] = df_copy[colonne_date].astype(str).str.replace('"', '').str.strip()
+            df_copy[colonne_date] = df_copy[colonne_date].astype(str).str.replace('"', '', regex=False).str.strip()
         
         # Convertir la colonne en datetime
         df_copy[colonne_date] = pd.to_datetime(df_copy[colonne_date], errors='coerce')
@@ -213,9 +213,9 @@ def convertir_frequence_journaliere(df: pd.DataFrame) -> pd.DataFrame:
         for col in df_copy.columns:
             if df_copy[col].dtype == 'object':
                 try:
-                    # Essayer de convertir en float
-                    df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce')
-                except:
+                    # Essayer de convertir en float (retirer les séparateurs de milliers)
+                    df_copy[col] = pd.to_numeric(df_copy[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
+                except Exception:
                     # Si la conversion échoue, garder la colonne telle quelle
                     continue
         

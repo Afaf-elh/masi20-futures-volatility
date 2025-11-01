@@ -18,6 +18,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 from statsmodels.tsa.stattools import adfuller
+from statsmodels.stats.diagnostic import acorr_ljungbox
 
 # Importer les modules utilitaires et de configuration
 from utils import (
@@ -42,6 +43,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 warnings.filterwarnings('ignore')
+
+
+def safe_filename(name: str) -> str:
+    """
+    Retourne une version sûre d'un composant de nom de fichier en supprimant
+    les caractères invalides pour les systèmes de fichiers (Windows notamment)
+    et en normalisant les espaces et retours de chariot.
+    """
+    if not isinstance(name, str):
+        name = str(name)
+    # Caractères interdits sous Windows: <>:"/\\|?* et les caractères de contrôle
+    forbidden = '<>:"/\\|?*'
+    cleaned = ''.join(ch for ch in name if ch not in forbidden)
+    # Supprimer caractères de contrôle (ord < 32)
+    cleaned = ''.join(ch for ch in cleaned if ord(ch) >= 32)
+    # Remplacer les séquences d'espaces par un underscore
+    cleaned = '_'.join(part for part in cleaned.split())
+    # Raccourcir si très long
+    if len(cleaned) > 200:
+        cleaned = cleaned[:200]
+    return cleaned
 
 # ---------------------- Fonctions d'UTILITAIRE ---------------------- #
 
@@ -126,7 +148,8 @@ def tracer_volatilite_individuelle(df: pd.DataFrame, pays: str, col_name: str, m
     )
     
     # Sauvegarder la version interactive
-    chemin_interactif = os.path.join(output_dir, f"volatilite_{suffix}_interactif.html")
+    filename_inter = safe_filename(f"volatilite_{suffix}_interactif.html")
+    chemin_interactif = os.path.join(output_dir, filename_inter)
     fig.write_html(chemin_interactif)
     
     logger.info(f"Graphique de volatilité {method_name} pour {PAYS[pays]['nom']} sauvegardé dans {chemin_sauvegarde} et {chemin_interactif}")
@@ -247,11 +270,70 @@ def tracer_futures_individuelle(df: pd.DataFrame, pays: str, col_name: str, meth
     )
     
     # Sauvegarder la version interactive
-    output_file_interactive = os.path.join(output_dir, f"future_{suffix}_interactif.html")
+    filename_inter = safe_filename(f"future_{suffix}_interactif.html")
+    output_file_interactive = os.path.join(output_dir, filename_inter)
     fig.write_html(output_file_interactive)
     
     logger.info(f"Graphique de simulation des futures {method_name} pour {PAYS[pays]['nom']} sauvegardé dans {output_file} et {output_file_interactive}")
 
+def obtenir_colonne_rendements(df: pd.DataFrame) -> Optional[str]:
+    """Retourne le nom de la série de rendements à utiliser pour les modèles de volatilité."""
+    if 'rendement_stationnaire' in df.columns and df['rendement_stationnaire'].notna().sum() > 0:
+        return 'rendement_stationnaire'
+    if 'rendement' in df.columns and df['rendement'].notna().sum() > 0:
+        logger.warning("Utilisation des rendements bruts faute de série stationnaire explicite.")
+        return 'rendement'
+    logger.warning("Aucune colonne de rendements disponible pour l'estimation des modèles conditionnels.")
+    return None
+
+
+def verifier_diagnostics_garch(result, nom_modele: str, alpha: float = 0.05) -> None:
+    """Effectue des diagnostics de base sur les résidus et les paramètres estimés."""
+    try:
+        params = result.params
+        if params is None:
+            logger.warning(f"Diagnostics indisponibles pour {nom_modele}: aucun paramètre estimé.")
+            return
+
+        alpha_terms = [params[idx] for idx in params.index if idx.lower().startswith('alpha')]
+        beta_terms = [params[idx] for idx in params.index if idx.lower().startswith('beta')]
+        if alpha_terms or beta_terms:
+            somme_stabilite = sum(alpha_terms) + sum(beta_terms)
+            if somme_stabilite >= 1:
+                logger.warning(
+                    f"Condition de stationnarité violée pour {nom_modele}: somme(alpha)+somme(beta) = {somme_stabilite:.3f}"
+                )
+            else:
+                logger.info(
+                    f"Condition alpha+beta<1 respectée pour {nom_modele} (somme = {somme_stabilite:.3f})."
+                )
+
+        insignifiants = [name for name, pval in result.pvalues.items() if pval > alpha]
+        if insignifiants:
+            logger.warning(
+                f"Paramètres non significatifs détectés pour {nom_modele} (p-value > {alpha}): {', '.join(insignifiants)}"
+            )
+        else:
+            logger.info(f"Tous les paramètres estimés pour {nom_modele} sont significatifs au seuil {alpha}.")
+
+        resid = result.resid.dropna()
+        if len(resid) > 10:
+            lb_result = acorr_ljungbox(resid ** 2, lags=[10], return_df=True)
+            pvalue = lb_result['lb_pvalue'].iloc[0]
+            if pvalue < alpha:
+                logger.warning(
+                    f"Effets ARCH résiduels détectés pour {nom_modele} (p-value Ljung-Box = {pvalue:.3f})."
+                )
+            else:
+                logger.info(
+                    f"Absence d'effets ARCH résiduels détectée pour {nom_modele} (p-value Ljung-Box = {pvalue:.3f})."
+                )
+        else:
+            logger.warning(
+                f"Échantillon insuffisant pour appliquer le test de Ljung-Box sur les résidus de {nom_modele}."
+            )
+    except Exception as exc:
+        logger.warning(f"Impossible de réaliser les diagnostics pour {nom_modele}: {exc}")
 
 def charger_donnees_pays(pays: str) -> Optional[pd.DataFrame]:
     """
@@ -280,7 +362,7 @@ def charger_donnees_pays(pays: str) -> Optional[pd.DataFrame]:
             if col in df.columns:
                 # Supprimer les guillemets et les virgules des milliers
                 if df[col].dtype == object:
-                    df[col] = df[col].astype(str).str.replace('"', '').str.replace(',', '')
+                    df[col] = df[col].astype(str).str.replace('"', '', regex=False).str.replace(',', '', regex=False)
                 # Convertir en numérique
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         
@@ -334,23 +416,44 @@ def calculer_rendements(df: pd.DataFrame, colonne_prix: str = 'close_indice') ->
         else:
             # Rendements simples
             df_copy['rendement'] = df_copy[colonne_prix].pct_change() * multiplicateur
-        
+
+        # Initialiser la colonne stationnaire avec les rendements bruts
+        df_copy['rendement_stationnaire'] = df_copy['rendement']
+        df_copy['rendement_stationnaire_ordre'] = 0
+       
         # Tester la stationnarité des rendements si configuré
         if STATIONNARITE.get('test', 'adf') == 'adf':
             est_stationnaire, p_value, _ = tester_stationnarite(df_copy['rendement'], 'rendements')
             
             if not est_stationnaire:
-                logger.warning(f"Les rendements ne sont pas stationnaires (p-value: {p_value:.4f}). Considérer une différenciation.")
-                
-                # Différencier si nécessaire et configuré
-                if STATIONNARITE.get('max_diff', 0) > 0:
-                    rendements_diff = differencier_serie(df_copy['rendement'])
-                    est_stationnaire_diff, p_value_diff, _ = tester_stationnarite(rendements_diff, 'rendements différenciés')
+                logger.warning(
+                    f"Les rendements ne sont pas stationnaires (p-value: {p_value:.4f}). Tentative de différenciation jusqu'à {STATIONNARITE.get('max_diff', 0)} ordres."
+                )
+
+                max_diff = STATIONNARITE.get('max_diff', 0)
+                stationnaire_trouve = False
+                for ordre in range(1, max_diff + 1):
+                    rendements_diff = differencier_serie(df_copy['rendement'], ordre=ordre)
+                    df_copy[f'rendement_diff_{ordre}'] = rendements_diff
+                    est_stationnaire_diff, p_value_diff, _ = tester_stationnarite(
+                        rendements_diff,
+                        f'rendements différenciés (ordre {ordre})'
+                    )
                     
                     if est_stationnaire_diff:
-                        logger.info(f"Les rendements différenciés sont stationnaires (p-value: {p_value_diff:.4f}).")
-                        df_copy['rendement_diff'] = rendements_diff
-        
+                        logger.info(
+                            f"Les rendements différenciés d'ordre {ordre} sont stationnaires (p-value: {p_value_diff:.4f})."
+                        )
+                        df_copy['rendement_stationnaire'] = rendements_diff
+                        df_copy['rendement_stationnaire_ordre'] = ordre
+                        stationnaire_trouve = True
+                        break
+
+                if not stationnaire_trouve:
+                    logger.warning(
+                        "Aucune différenciation n'a permis d'obtenir une série stationnaire. Utilisation des rendements bruts pour l'estimation."
+                    )
+
         return df_copy
     
     except Exception as e:
@@ -405,71 +508,104 @@ def calculer_volatilite_historique(df: pd.DataFrame, fenetre: int = 30, annualis
         logger.error(f"Erreur lors du calcul de la volatilité historique: {e}")
         return df
 
-def optimiser_parametres_garch(df: pd.DataFrame, p_max: int = 10, q_max: int = 10) -> Tuple[int, int]:
+def optimiser_parametres_garch(
+    df: pd.DataFrame,
+    p_max: int = 10,
+    q_max: int = 10,
+    criteres: Tuple[str, ...] = ("aic", "bic")
+) -> Tuple[Dict[str, Tuple[int, int]], List[Dict[str, Any]]]:    
     """
-    Optimise les paramètres p et q du modèle GARCH en utilisant AIC et BIC.
-    
-    Args:
-        df: DataFrame contenant une colonne 'rendement'
-        p_max: Ordre maximal pour p
-        q_max: Ordre maximal pour q
-        
-    Returns:
-        Tuple (p, q) optimisé basé sur le critère AIC ou BIC
+        Optimise les paramètres p et q du modèle GARCH en utilisant différents critères d'information.        
+        Returns:
+            Tuple contenant :
+            - un dictionnaire {critère: (p, q)}
+            - la liste des résultats détaillés pour chaque couple testé
     """
     try:
-        if 'rendement' not in df.columns:
-            logger.warning("La colonne 'rendement' n'existe pas dans le DataFrame.")
-            return (1, 1)  # Valeurs par défaut
-        
-        # Filtrer les valeurs NaN
-        rendements = df['rendement'].dropna()
-        
-        if len(rendements) < 100:  # Pas assez de données
+        colonne_rendements = obtenir_colonne_rendements(df)
+        if colonne_rendements is None:
+            return {crit: (1, 1) for crit in criteres}
+
+        rendements = df[colonne_rendements].dropna()
+
+        if len(rendements) < 100:
             logger.warning("Pas assez de données pour optimiser les paramètres GARCH.")
-            return (1, 1)
-        
-        best_aic = np.inf
-        best_bic = np.inf
-        best_p, best_q = 1, 1
-        
-        # Tester toutes les combinaisons de p et q
-        for p in range(1, p_max + 1):
-            for q in range(1, q_max + 1):
+            return {crit: (1, 1) for crit in criteres}, []
+
+        best_scores = {crit: np.inf for crit in criteres}
+        best_params = {crit: (1, 1) for crit in criteres}
+        resultats = []
+
+        for p in range(0, p_max + 1):
+            for q in range(0, q_max + 1):
+                if p == 0 and q == 0:
+                    continue
                 try:
-                    model = arch_model(rendements, vol='Garch', p=p, q=q, rescale=False)
+                    model = arch_model(rendements, vol='Garch', p=p, q=q, rescale=True)
                     result = model.fit(disp='off')
                     
-                    # Calculer AIC et BIC
-                    aic = result.aic
-                    bic = result.bic
-                    
-                    # Afficher les valeurs AIC et BIC pour chaque combinaison p et q
-                    logger.info(f"AIC pour p={p}, q={q}: {aic}")
-                    logger.info(f"BIC pour p={p}, q={q}: {bic}")
-                    
-                    # Comparer l'AIC et le BIC pour choisir les meilleurs paramètres
-                    if aic < best_aic:
-                        best_aic = aic
-                        best_p, best_q = p, q
-                    
-                    if bic < best_bic:
-                        best_bic = bic
-                        best_p, best_q = p, q
+                    scores = {
+                        'aic': result.aic,
+                        'bic': result.bic
+                    }
+                    resultats.append({'p': p, 'q': q, **scores})
+                    logger.info(f"Scores pour p={p}, q={q}: AIC={scores['aic']:.4f}, BIC={scores['bic']:.4f}")
+
+                    for crit in criteres:
+                        valeur = scores.get(crit)
+                        if valeur is None:
+                            continue
+                        if valeur < best_scores[crit]:
+                            best_scores[crit] = valeur
+                            best_params[crit] = (p, q)
                         
                 except Exception as e:
                     logger.warning(f"Erreur lors de l'ajustement du modèle avec p={p}, q={q}: {e}")
         
-        logger.info(f"Paramètres optimisés - AIC: p={best_p}, q={best_q}, BIC: p={best_p}, q={best_q}")
-        return (best_p, best_q)
+        for crit in criteres:
+            logger.info(f"Meilleurs paramètres selon {crit.upper()} : p={best_params[crit][0]}, q={best_params[crit][1]}")
+
+        return best_params, resultats
     
     except Exception as e:
         logger.error(f"Erreur lors de l'optimisation des paramètres GARCH: {e}")
-        return (1, 1)
+        return {crit: (1, 1) for crit in criteres}, []
 
 
-def calculer_volatilite_garch(df: pd.DataFrame, p: int = 1, q: int = 1, optimisation: bool = True, 
-                             p_max: int = 10, q_max: int = 10, annualisation: bool = True) -> pd.DataFrame:
+def rechercher_parametres_garch_topk(
+    df: pd.DataFrame,
+    p_max: int = 10,
+    q_max: int = 10,
+    top_k: int = 3,
+    critere: str = 'aic'
+) -> Tuple[Tuple[int, int], List[Tuple[int, int]]]:
+    """Retourne le meilleur couple (p, q) et la liste top-k selon le critère choisi."""
+    best_params_map, resultats = optimiser_parametres_garch(df, p_max, q_max, (critere, 'bic'))
+
+    if not resultats:
+        return best_params_map.get(critere, (1, 1)), [best_params_map.get(critere, (1, 1))]
+
+    critere = critere.lower()
+    if critere not in {'aic', 'bic'}:
+        critere = 'aic'
+
+
+    resultats_tries = sorted(resultats, key=lambda item: item[critere])
+    top_pairs = [(item['p'], item['q']) for item in resultats_tries[:max(1, top_k)]]
+    meilleur = top_pairs[0]
+    return meilleur, top_pairs
+
+
+def calculer_volatilite_garch(
+    df: pd.DataFrame,
+    p: int = 1,
+    q: int = 1,
+    optimisation: bool = True,
+    p_max: int = 10,
+    q_max: int = 10,
+    annualisation: bool = True,
+    critere: str = 'aic'
+) -> pd.DataFrame:
     """
     Calcule la volatilité avec un modèle GARCH.
     
@@ -486,14 +622,14 @@ def calculer_volatilite_garch(df: pd.DataFrame, p: int = 1, q: int = 1, optimisa
         DataFrame avec une colonne 'volatilite_garch' ajoutée
     """
     try:
-        if 'rendement' not in df.columns:
-            logger.warning("La colonne 'rendement' n'existe pas dans le DataFrame.")
-            return df
-        
+
         df_copy = df.copy()
         
-        # Filtrer les valeurs NaN
-        rendements = df_copy['rendement'].dropna()
+        colonne_rendements = obtenir_colonne_rendements(df_copy)
+        if colonne_rendements is None:
+            return df_copy
+
+        rendements = df_copy[colonne_rendements].dropna()
         
         if len(rendements) < 100:  # Pas assez de données
             logger.warning("Pas assez de données pour ajuster un modèle GARCH.")
@@ -501,29 +637,28 @@ def calculer_volatilite_garch(df: pd.DataFrame, p: int = 1, q: int = 1, optimisa
         
         # Optimiser les paramètres si demandé
         if optimisation:
-            p, q = optimiser_parametres_garch(df_copy, p_max, q_max)
+            critere = critere.lower()
+            best_params_map, _ = optimiser_parametres_garch(df_copy, p_max, q_max, (critere,))
+            p, q = best_params_map.get(critere, (p, q))
         
         # Ajuster le modèle GARCH
-        model = arch_model(rendements, vol='Garch', p=p, q=q, rescale=False)
+        model = arch_model(rendements, vol='Garch', p=p, q=q, rescale=True)
         result = model.fit(disp='off')
-        
+        verifier_diagnostics_garch(result, f"GARCH(p={p}, q={q})")
+
         # Extraire la volatilité conditionnelle
         volatilite = result.conditional_volatility
         
         # Créer une série avec le même index que le DataFrame original
-        volatilite_series = pd.Series(index=df_copy.index, dtype=float)
-        
-        # Assigner les valeurs de volatilité aux dates correspondantes
-        for i, date in enumerate(rendements.index):
-            if date in volatilite_series.index:
-                volatilite_series[date] = volatilite[i]
-        
-        # Interpoler les valeurs manquantes
+        volatilite_series = volatilite.reindex(df_copy.index)
         volatilite_series = volatilite_series.interpolate(method='linear')
         
         # Ajouter la volatilité au DataFrame
         df_copy['volatilite_garch'] = volatilite_series
-        
+        df_copy['garch_p'] = p
+        df_copy['garch_q'] = q
+        df_copy['garch_rendements_source'] = colonne_rendements
+
         # Annualiser la volatilité si demandé
         if annualisation:
             df_copy['volatilite_garch'] = df_copy['volatilite_garch'] * np.sqrt(252)
@@ -545,74 +680,91 @@ def calculer_volatilite_garch(df: pd.DataFrame, p: int = 1, q: int = 1, optimisa
         return df
 
 
-def calculer_volatilite_egarch(df: pd.DataFrame, p: int = 1, q: int = 1, optimisation: bool = True, 
-                              annualisation: bool = True) -> pd.DataFrame:
+def calculer_volatilite_egarch(
+    df: pd.DataFrame,
+    p: int = 1,
+    q: int = 1,
+    optimisation: bool = True,
+    annualisation: bool = True,
+    p_max: int = 5,
+    q_max: int = 5,
+    candidates: Optional[List[Tuple[int, int]]] = None,
+    critere: str = 'aic'
+) -> pd.DataFrame:
     """
-    Calcule la volatilité avec un modèle EGARCH.
-    
-    Args:
-        df: DataFrame contenant une colonne 'rendement'
-        p: Ordre du terme GARCH
-        q: Ordre du terme ARCH
-        optimisation: Si True, optimise les paramètres p et q
-        annualisation: Si True, annualise la volatilité
-        
-    Returns:
-        DataFrame avec une colonne 'volatilite_egarch' ajoutée
+    Calcule la volatilité avec un modèle EGARCH en testant plusieurs couples (p, q).
     """
     try:
-        if 'rendement' not in df.columns:
-            logger.warning("La colonne 'rendement' n'existe pas dans le DataFrame.")
-            return df
         
         df_copy = df.copy()
         
-        # Filtrer les valeurs NaN
-        rendements = df_copy['rendement'].dropna()
-        
-        if len(rendements) < 100:  # Pas assez de données
+        colonne_rendements = obtenir_colonne_rendements(df_copy)
+        if colonne_rendements is None:
+            return df_copy
+
+        rendements = df_copy[colonne_rendements].dropna()
+
+        if len(rendements) < 100:
             logger.warning("Pas assez de données pour ajuster un modèle EGARCH.")
             return df_copy
         
-        # Ajuster le modèle EGARCH
-        try:
-            model = arch_model(rendements, vol='EGARCH', p=p, q=q, rescale=False)
-            result = model.fit(disp='off')
-            
-            # Extraire la volatilité conditionnelle
-            volatilite = result.conditional_volatility
-            
-            # Créer une série avec le même index que le DataFrame original
-            volatilite_series = pd.Series(index=df_copy.index, dtype=float)
-            
-            # Assigner les valeurs de volatilité aux dates correspondantes
-            for i, date in enumerate(rendements.index):
-                if date in volatilite_series.index:
-                    volatilite_series[date] = volatilite[i]
-            
-            # Interpoler les valeurs manquantes
-            volatilite_series = volatilite_series.interpolate(method='linear')
-            
-            # Ajouter la volatilité au DataFrame
-            df_copy['volatilite_egarch'] = volatilite_series
-            
-            # Annualiser la volatilité si demandé
-            if annualisation:
-                df_copy['volatilite_egarch'] = df_copy['volatilite_egarch'] * np.sqrt(252)
-            
-            # Détecter les valeurs aberrantes si configuré
-            if VALEURS_ABERRANTES.get('analyse_separee', False):
-                df_copy = detecter_valeurs_aberrantes(
-                    df_copy, 
-                    'volatilite_egarch', 
-                    methode=VALEURS_ABERRANTES.get('methode', 'zscore'),
-                    seuil=VALEURS_ABERRANTES.get('seuil', 3.0),
-                    traitement=VALEURS_ABERRANTES.get('traitement', 'marquer')
-                )
-            
-        except Exception as e:
-            logger.warning(f"Erreur lors de l'ajustement du modèle EGARCH: {e}")
-        
+        recherche = []
+        if candidates:
+            recherche = list(dict.fromkeys(candidates))
+
+        if optimisation:
+            critere = critere.lower()
+            if not recherche:
+                for p_cand in range(0, p_max + 1):
+                    for q_cand in range(0, q_max + 1):
+                        if p_cand == 0 and q_cand == 0:
+                            continue
+                        recherche.append((p_cand, q_cand))
+        elif not recherche:
+            recherche = [(p, q)]
+
+        meilleur_result = None
+        meilleur_score = np.inf
+        meilleur_params = (p, q)
+
+        for cand_p, cand_q in recherche:
+            try:
+                model = arch_model(rendements, vol='EGARCH', p=cand_p, q=cand_q, rescale=True)
+                result = model.fit(disp='off')
+                score = getattr(result, critere.lower(), np.inf)
+                logger.info(f"EGARCH scores p={cand_p}, q={cand_q}: AIC={result.aic:.4f}, BIC={result.bic:.4f}")
+                if score < meilleur_score:
+                    meilleur_score = score
+                    meilleur_result = result
+                    meilleur_params = (cand_p, cand_q)
+            except Exception as exc:
+                logger.warning(f"Erreur lors de l'ajustement EGARCH p={cand_p}, q={cand_q}: {exc}")
+
+        if meilleur_result is None:
+            logger.warning("Aucun ajustement EGARCH concluant n'a été trouvé.")
+            return df_copy
+
+        verifier_diagnostics_garch(meilleur_result, f"EGARCH(p={meilleur_params[0]}, q={meilleur_params[1]})")
+
+        volatilite = meilleur_result.conditional_volatility
+        volatilite_series = volatilite.reindex(df_copy.index).interpolate(method='linear')
+        df_copy['volatilite_egarch'] = volatilite_series
+        df_copy['egarch_p'] = meilleur_params[0]
+        df_copy['egarch_q'] = meilleur_params[1]
+        df_copy['egarch_rendements_source'] = colonne_rendements
+
+        if annualisation:
+            df_copy['volatilite_egarch'] = df_copy['volatilite_egarch'] * np.sqrt(252)
+
+        if VALEURS_ABERRANTES.get('analyse_separee', False):
+            df_copy = detecter_valeurs_aberrantes(
+                df_copy,
+                'volatilite_egarch',
+                methode=VALEURS_ABERRANTES.get('methode', 'zscore'),
+                seuil=VALEURS_ABERRANTES.get('seuil', 3.0),
+                traitement=VALEURS_ABERRANTES.get('traitement', 'marquer')
+            )
+
         return df_copy
     
     except Exception as e:
@@ -620,74 +772,91 @@ def calculer_volatilite_egarch(df: pd.DataFrame, p: int = 1, q: int = 1, optimis
         return df
 
 
-def calculer_volatilite_gjr_garch(df: pd.DataFrame, p: int = 1, q: int = 1, optimisation: bool = True, 
-                                 annualisation: bool = True) -> pd.DataFrame:
+def calculer_volatilite_gjr_garch(
+    df: pd.DataFrame,
+    p: int = 1,
+    q: int = 1,
+    optimisation: bool = True,
+    annualisation: bool = True,
+    p_max: int = 5,
+    q_max: int = 5,
+    candidates: Optional[List[Tuple[int, int]]] = None,
+    critere: str = 'aic'
+) -> pd.DataFrame:
     """
-    Calcule la volatilité avec un modèle GJR-GARCH.
-    
-    Args:
-        df: DataFrame contenant une colonne 'rendement'
-        p: Ordre du terme GARCH
-        q: Ordre du terme ARCH
-        optimisation: Si True, optimise les paramètres p et q
-        annualisation: Si True, annualise la volatilité
-        
-    Returns:
-        DataFrame avec une colonne 'volatilite_gjr_garch' ajoutée
+    Calcule la volatilité avec un modèle GJR-GARCH en évaluant plusieurs couples (p, q).
     """
     try:
-        if 'rendement' not in df.columns:
-            logger.warning("La colonne 'rendement' n'existe pas dans le DataFrame.")
-            return df
         
         df_copy = df.copy()
         
-        # Filtrer les valeurs NaN
-        rendements = df_copy['rendement'].dropna()
-        
-        if len(rendements) < 100:  # Pas assez de données
+        colonne_rendements = obtenir_colonne_rendements(df_copy)
+        if colonne_rendements is None:
+            return df_copy
+
+        rendements = df_copy[colonne_rendements].dropna()
+
+        if len(rendements) < 100:
             logger.warning("Pas assez de données pour ajuster un modèle GJR-GARCH.")
             return df_copy
         
-        # Ajuster le modèle GJR-GARCH
-        try:
-            model = arch_model(rendements, vol='GARCH', p=p, q=q, o=1, power=2.0, rescale=False)
-            result = model.fit(disp='off')
-            
-            # Extraire la volatilité conditionnelle
-            volatilite = result.conditional_volatility
-            
-            # Créer une série avec le même index que le DataFrame original
-            volatilite_series = pd.Series(index=df_copy.index, dtype=float)
-            
-            # Assigner les valeurs de volatilité aux dates correspondantes
-            for i, date in enumerate(rendements.index):
-                if date in volatilite_series.index:
-                    volatilite_series[date] = volatilite[i]
-            
-            # Interpoler les valeurs manquantes
-            volatilite_series = volatilite_series.interpolate(method='linear')
-            
-            # Ajouter la volatilité au DataFrame
-            df_copy['volatilite_gjr_garch'] = volatilite_series
-            
-            # Annualiser la volatilité si demandé
-            if annualisation:
-                df_copy['volatilite_gjr_garch'] = df_copy['volatilite_gjr_garch'] * np.sqrt(252)
-            
-            # Détecter les valeurs aberrantes si configuré
-            if VALEURS_ABERRANTES.get('analyse_separee', False):
-                df_copy = detecter_valeurs_aberrantes(
-                    df_copy, 
-                    'volatilite_gjr_garch', 
-                    methode=VALEURS_ABERRANTES.get('methode', 'zscore'),
-                    seuil=VALEURS_ABERRANTES.get('seuil', 3.0),
-                    traitement=VALEURS_ABERRANTES.get('traitement', 'marquer')
-                )
-            
-        except Exception as e:
-            logger.warning(f"Erreur lors de l'ajustement du modèle GJR-GARCH: {e}")
-        
+        recherche = []
+        if candidates:
+            recherche = list(dict.fromkeys(candidates))
+
+        if optimisation:
+            critere = critere.lower()
+            if not recherche:
+                for p_cand in range(0, p_max + 1):
+                    for q_cand in range(0, q_max + 1):
+                        if p_cand == 0 and q_cand == 0:
+                            continue
+                        recherche.append((p_cand, q_cand))
+        elif not recherche:
+            recherche = [(p, q)]
+
+        meilleur_result = None
+        meilleur_score = np.inf
+        meilleur_params = (p, q)
+
+        for cand_p, cand_q in recherche:
+            try:
+                model = arch_model(rendements, vol='GARCH', p=cand_p, q=cand_q, o=1, power=2.0, rescale=True)
+                result = model.fit(disp='off')
+                score = getattr(result, critere.lower(), np.inf)
+                logger.info(f"GJR-GARCH scores p={cand_p}, q={cand_q}: AIC={result.aic:.4f}, BIC={result.bic:.4f}")
+                if score < meilleur_score:
+                    meilleur_score = score
+                    meilleur_result = result
+                    meilleur_params = (cand_p, cand_q)
+            except Exception as exc:
+                logger.warning(f"Erreur lors de l'ajustement GJR-GARCH p={cand_p}, q={cand_q}: {exc}")
+
+        if meilleur_result is None:
+            logger.warning("Aucun ajustement GJR-GARCH concluant n'a été trouvé.")
+            return df_copy
+
+        verifier_diagnostics_garch(meilleur_result, f"GJR-GARCH(p={meilleur_params[0]}, q={meilleur_params[1]})")
+
+        volatilite = meilleur_result.conditional_volatility
+        volatilite_series = volatilite.reindex(df_copy.index).interpolate(method='linear')
+        df_copy['volatilite_gjr_garch'] = volatilite_series
+        df_copy['gjr_garch_p'] = meilleur_params[0]
+        df_copy['gjr_garch_q'] = meilleur_params[1]
+        df_copy['gjr_rendements_source'] = colonne_rendements
+
+        if annualisation:
+            df_copy['volatilite_gjr_garch'] = df_copy['volatilite_gjr_garch'] * np.sqrt(252)
+
+        if VALEURS_ABERRANTES.get('analyse_separee', False):
+            df_copy = detecter_valeurs_aberrantes(
+                df_copy,
+                'volatilite_gjr_garch',
+                methode=VALEURS_ABERRANTES.get('methode', 'zscore'),
+                seuil=VALEURS_ABERRANTES.get('seuil', 3.0),
+                traitement=VALEURS_ABERRANTES.get('traitement', 'marquer')
+            )
+
         return df_copy
     
     except Exception as e:
@@ -912,11 +1081,11 @@ def comparer_volatilites(df: pd.DataFrame, pays: str) -> None:
             height=600,
             width=1000
         )
-        
+
         # Sauvegarder la version interactive
-        chemin_interactif = os.path.join(output_dir, "comparaison_volatilites.html")
+        chemin_interactif = os.path.join(output_dir, safe_filename("comparaison_volatilites.html"))
         fig.write_html(chemin_interactif)
-        
+
         logger.info(f"Graphique de comparaison des volatilités pour {PAYS[pays]['nom']} sauvegardé dans {chemin_sauvegarde} et {chemin_interactif}")
     
     except Exception as e:
@@ -1048,13 +1217,13 @@ def comparer_futures(df: pd.DataFrame, pays: str) -> None:
             height=600,
             width=1000
         )
-        
+
         # Sauvegarder la version interactive
-        output_file_interactive = os.path.join(output_dir, "comparaison_futures.html")
+        output_file_interactive = os.path.join(output_dir, safe_filename("comparaison_futures.html"))
         fig.write_html(output_file_interactive)
-        
+
         logger.info(f"Graphique de comparaison des futures pour {PAYS[pays]['nom']} sauvegardé dans {output_file} et {output_file_interactive}")
-    
+
     except Exception as e:
         logger.error(f"Erreur lors de la comparaison des futures: {e}")
 
@@ -1231,11 +1400,11 @@ def comparer_volatilites_pays(pays_list: List[str]) -> None:
             height=600,
             width=1000
         )
-        
+
         # Sauvegarder la version interactive
-        output_file_interactive = os.path.join(output_dir, "comparaison_volatilites_pays.html")
+        output_file_interactive = os.path.join(output_dir, safe_filename("comparaison_volatilites_pays.html"))
         fig.write_html(output_file_interactive)
-        
+
         # Calculer la matrice de corrélation
         corr = volatilites.corr()
         
@@ -1272,9 +1441,9 @@ def comparer_volatilites_pays(pays_list: List[str]) -> None:
         )
         
         # Sauvegarder la version interactive
-        output_file_corr_interactive = os.path.join(output_dir, "correlation_volatilites_pays.html")
+        output_file_corr_interactive = os.path.join(output_dir, safe_filename("correlation_volatilites_pays.html"))
         fig_corr.write_html(output_file_corr_interactive)
-        
+
         logger.info(f"Comparaison des volatilités entre pays sauvegardée dans {output_file} et {output_file_interactive}")
         logger.info(f"Matrice de corrélation des volatilités entre pays sauvegardée dans {output_file_corr} et {output_file_corr_interactive}")
     
@@ -1315,41 +1484,70 @@ def main():
             tracer_volatilite_individuelle(df, pays, 'volatilite_historique', 'Historique')
             
           
-            # Volatilité GARCH
+            # Volatilité GARCH avec optimisation séparée AIC/BIC
             params_garch = MODELES_VOLATILITE['garch']
+            critere_garch = params_garch.get('critere', 'aic')
+            p_max_garch = params_garch.get('p_max', 10)
+            q_max_garch = params_garch.get('q_max', 10)
+            top_k_pairs = [(params_garch.get('p', 1), params_garch.get('q', 1))]
+
+            if params_garch.get('optimisation', False):
+                meilleur, top_k_pairs = rechercher_parametres_garch_topk(
+                    df,
+                    p_max=p_max_garch,
+                    q_max=q_max_garch,
+                    top_k=params_garch.get('top_k', 3),
+                    critere=critere_garch
+                )
+                logger.info(f"Meilleurs paramètres GARCH selon {critere_garch.upper()} pour {pays}: p={meilleur[0]}, q={meilleur[1]}")
+            else:
+                meilleur = (params_garch.get('p', 1), params_garch.get('q', 1))
+
+            top_k_pairs = list(dict.fromkeys(top_k_pairs))
+
             df = calculer_volatilite_garch(
-                df, 
-                p=params_garch['p'], 
-                q=params_garch['q'], 
-                optimisation=params_garch['optimisation'],
-                p_max=params_garch.get('p_max', 10),
-                q_max=params_garch.get('q_max', 10),
-                annualisation=params_garch.get('annualisation', True)
+                df,
+                p=meilleur[0],
+                q=meilleur[1],
+                optimisation=False,
+                p_max=p_max_garch,
+                q_max=q_max_garch,
+                annualisation=params_garch.get('annualisation', True),
+                critere=critere_garch
             )
             tracer_volatilite_individuelle(df, pays, 'volatilite_garch', 'GARCH')
             
             # Volatilité EGARCH
             params_egarch = MODELES_VOLATILITE['egarch']
             df = calculer_volatilite_egarch(
-                df, 
-                p=params_egarch['p'], 
-                q=params_egarch['q'], 
-                optimisation=params_egarch['optimisation'],
-                annualisation=params_egarch.get('annualisation', True)
+                df,
+                p=params_egarch.get('p', 1),
+                q=params_egarch.get('q', 1),
+                optimisation=params_egarch.get('optimisation', False),
+                annualisation=params_egarch.get('annualisation', True),
+                p_max=params_egarch.get('p_max', p_max_garch),
+                q_max=params_egarch.get('q_max', q_max_garch),
+                candidates=top_k_pairs,
+                critere=params_egarch.get('critere', critere_garch)
             )
             tracer_volatilite_individuelle(df, pays, 'volatilite_egarch', 'EGARCH')
             
+
             # Volatilité GJR-GARCH
             params_gjr_garch = MODELES_VOLATILITE['gjr_garch']
             df = calculer_volatilite_gjr_garch(
-                df, 
-                p=params_gjr_garch['p'], 
-                q=params_gjr_garch['q'], 
-                optimisation=params_gjr_garch['optimisation'],
-                annualisation=params_gjr_garch.get('annualisation', True)
+                df,
+                p=params_gjr_garch.get('p', 1),
+                q=params_gjr_garch.get('q', 1),
+                optimisation=params_gjr_garch.get('optimisation', False),
+                annualisation=params_gjr_garch.get('annualisation', True),
+                p_max=params_gjr_garch.get('p_max', p_max_garch),
+                q_max=params_gjr_garch.get('q_max', q_max_garch),
+                candidates=top_k_pairs,
+                critere=params_gjr_garch.get('critere', critere_garch)
             )
             tracer_volatilite_individuelle(df, pays, 'volatilite_gjr_garch', 'GJR-GARCH')
-            
+
             # Comparer les volatilités
             comparer_volatilites(df, pays)
             
