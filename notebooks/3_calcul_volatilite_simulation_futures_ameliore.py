@@ -342,7 +342,12 @@ def evaluer_diagnostics_garch(result, alpha: float = 0.05) -> Dict[str, Any]:
         penalite += 1.0
 
     diagnostics['penalite'] = penalite
-    diagnostics['valide'] = diagnostics['convergence'] == 0 and diagnostics['stationnaire']
+    diagnostics['valide'] = (
+        diagnostics['convergence'] == 0
+        and diagnostics['stationnaire']
+        and diagnostics['arch_residuels']
+        and diagnostics['significatif']
+    )
     return diagnostics
 
 
@@ -632,10 +637,12 @@ def optimiser_parametres_garch(
                         penalite,
                     )
 
-                    if diagnostics.get('convergence') != 0:
-                        continue
-
-                    if not diagnostics['stationnaire']:
+                    if (
+                        diagnostics.get('convergence') != 0
+                        or not diagnostics['stationnaire']
+                        or not diagnostics['arch_residuels']
+                        or not diagnostics['significatif']
+                    ):
                         logger.debug(
                             "Diagnostics invalides pour p=%s, q=%s (stationnaire=%s, significatif=%s, arch=%s, convergence=%s)",
                             p,
@@ -733,7 +740,10 @@ def rechercher_parametres_garch_topk(
         choix = best_params_map.get(critere, (1, 1))
         return choix, [choix]
 
-    resultats_tries = sorted(source_tri, key=lambda item: item[critere])
+    resultats_tries = sorted(
+        source_tri,
+        key=lambda item: (item.get('penalite', np.inf), item.get(critere, np.inf))
+    )
     top_pairs = [(item['p'], item['q']) for item in resultats_tries[:max(1, top_k)]]
     meilleur = top_pairs[0]
     return meilleur, top_pairs
@@ -898,7 +908,12 @@ def calculer_volatilite_egarch(
                     diagnostics['valide'],
                     penalite,
                 )
-                if diagnostics.get('convergence') != 0 or not diagnostics['stationnaire']:
+                if (
+                    diagnostics.get('convergence') != 0
+                    or not diagnostics['stationnaire']
+                    or not diagnostics['arch_residuels']
+                    or not diagnostics['significatif']
+                ):
                     logger.debug(
                         "Diagnostics invalides pour EGARCH p=%s, q=%s (stationnaire=%s, significatif=%s, arch=%s, convergence=%s)",
                         cand_p,
@@ -1052,7 +1067,12 @@ def calculer_volatilite_gjr_garch(
                     diagnostics['valide'],
                     penalite,
                 )
-                if diagnostics.get('convergence') != 0 or not diagnostics['stationnaire']:
+                if (
+                    diagnostics.get('convergence') != 0
+                    or not diagnostics['stationnaire']
+                    or not diagnostics['arch_residuels']
+                    or not diagnostics['significatif']
+                ):
                     logger.debug(
                         "Diagnostics invalides pour GJR-GARCH p=%s, q=%s (stationnaire=%s, significatif=%s, arch=%s, convergence=%s)",
                         cand_p,
