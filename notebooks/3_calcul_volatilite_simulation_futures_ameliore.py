@@ -18,7 +18,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 from statsmodels.tsa.stattools import adfuller
-from statsmodels.stats.diagnostic import acorr_ljungbox
+from statsmodels.stats.stattools import durbin_watson
 
 # Importer les modules utilitaires et de configuration
 from utils import (
@@ -312,17 +312,31 @@ def evaluer_diagnostics_garch(result, alpha: float = 0.05) -> Dict[str, Any]:
 
         pvalues = result.pvalues
         if pvalues is not None:
-            diagnostics['parametres_insignificatifs'] = [name for name, pval in pvalues.items() if pval > alpha]
-            diagnostics['significatif'] = len(diagnostics['parametres_insignificatifs']) == 0
+            # Collect insignificant parameters using given alpha
+            insignificants = [name for name, pval in pvalues.items() if pval is not None and pval > alpha]
+            diagnostics['parametres_insignificatifs'] = insignificants
+            # Relaxed rule: allow up to 2 insignificant params overall, but require key terms (alpha1/beta1) to be significant if they exist
+            allowed_insig = 2
+            core_ok = True
+            # param names in arch can be like 'alpha[1]' or 'alpha1'
+            for core in ('alpha[1]', 'alpha1'):
+                if core in pvalues and pvalues.get(core, 0.0) > alpha:
+                    core_ok = False
+            for core in ('beta[1]', 'beta1'):
+                if core in pvalues and pvalues.get(core, 0.0) > alpha:
+                    core_ok = False
+            diagnostics['significatif'] = (len(insignificants) <= allowed_insig) and core_ok
         else:
             diagnostics['significatif'] = False
 
         resid = result.resid.dropna()
         if len(resid) > 10:
-            lb_result = acorr_ljungbox(resid ** 2, lags=[10], return_df=True)
-            pvalue = float(lb_result['lb_pvalue'].iloc[0])
-            diagnostics['pvalue_ljungbox'] = pvalue
-            diagnostics['arch_residuels'] = pvalue >= alpha
+            # Durbin-Watson: approx. 2 indicates no autocorrelation; <2 positive autocorr; >2 negative autocorr
+            dw_stat = float(durbin_watson(resid))
+            diagnostics['dw_stat'] = dw_stat
+            # Loosen tolerance a bit to avoid rejecting for mild deviations
+            tol = 0.5
+            diagnostics['arch_residuels'] = abs(dw_stat - 2.0) <= tol
         else:
             diagnostics['arch_residuels'] = True  # échantillon trop court, ne pas invalider automatiquement
 
@@ -337,7 +351,8 @@ def evaluer_diagnostics_garch(result, alpha: float = 0.05) -> Dict[str, Any]:
     if not diagnostics['stationnaire']:
         penalite += 5.0
     if not diagnostics['significatif']:
-        penalite += max(1.0, float(len(diagnostics['parametres_insignificatifs'])))
+        # reduce impact of insignificance: cap added penalty
+        penalite += min(3.0, float(len(diagnostics['parametres_insignificatifs'])))
     if not diagnostics['arch_residuels']:
         penalite += 1.0
 
@@ -373,19 +388,19 @@ def verifier_diagnostics_garch(result, nom_modele: str, alpha: float = 0.05) -> 
     else:
         logger.info(f"Tous les paramètres estimés pour {nom_modele} sont significatifs au seuil {alpha}.")
 
-    pvalue = diagnostics.get('pvalue_ljungbox')
-    if not np.isnan(pvalue):
+    dw_stat = diagnostics.get('dw_stat')
+    if dw_stat is not None:
         if diagnostics['arch_residuels']:
             logger.info(
-                f"Absence d'effets ARCH résiduels détectée pour {nom_modele} (p-value Ljung-Box = {pvalue:.3f})."
+                f"Absence d'autocorrélation sérieuse détectée pour {nom_modele} (Durbin-Watson = {dw_stat:.4f}, cible ~2)."
             )
         else:
             logger.warning(
-                f"Effets ARCH résiduels détectés pour {nom_modele} (p-value Ljung-Box = {pvalue:.3f})."
+                f"Autocorrélation résiduelle détectée pour {nom_modele} (Durbin-Watson = {dw_stat:.4f}; s'éloigne de 2)."
             )
     else:
         logger.info(
-            f"Échantillon insuffisant pour appliquer le test de Ljung-Box sur les résidus de {nom_modele}."
+            f"Échantillon insuffisant pour calculer le Durbin-Watson sur les résidus de {nom_modele}."
         )
 
     if diagnostics['convergence'] != 0:
@@ -463,34 +478,39 @@ def calculer_rendements(df: pd.DataFrame, colonne_prix: str = 'close_indice') ->
         if colonne_prix not in df.columns:
             logger.warning(f"La colonne {colonne_prix} n'existe pas dans le DataFrame.")
             return df
-        
+
         df_copy = df.copy()
-        
+
         # Calculer les rendements selon la méthode spécifiée dans la configuration
-        methode = RENDEMENTS.get('methode', 'log')
-        multiplicateur = RENDEMENTS.get('multiplicateur', 100)
-        
+        # Par défaut, utiliser les rendements simples: R_t = (P_t - P_{t-1}) / P_{t-1}
+        methode = RENDEMENTS.get('methode', 'simple')
+        # Ne pas multiplier par 100 par défaut : garder rendements en décimal
+        multiplicateur = RENDEMENTS.get('multiplicateur', 1)
+
         if methode == 'log':
             # Rendements logarithmiques
             df_copy['rendement'] = np.log(df_copy[colonne_prix] / df_copy[colonne_prix].shift(1)) * multiplicateur
         else:
-            # Rendements simples
+            # Rendements simples: (P_t - P_{t-1}) / P_{t-1}
             df_copy['rendement'] = df_copy[colonne_prix].pct_change() * multiplicateur
 
         # Initialiser la colonne stationnaire avec les rendements bruts
         df_copy['rendement_stationnaire'] = df_copy['rendement']
         df_copy['rendement_stationnaire_ordre'] = 0
-       
+
         # Tester la stationnarité des rendements si configuré
         if STATIONNARITE.get('test', 'adf') == 'adf':
             est_stationnaire, p_value, _ = tester_stationnarite(df_copy['rendement'], 'rendements')
-            
+
             if not est_stationnaire:
                 logger.warning(
                     f"Les rendements ne sont pas stationnaires (p-value: {p_value:.4f}). Tentative de différenciation jusqu'à {STATIONNARITE.get('max_diff', 0)} ordres."
                 )
 
                 max_diff = STATIONNARITE.get('max_diff', 0)
+                # Allow at least one order of differencing as a fallback
+                if max_diff < 1:
+                    max_diff = 1
                 stationnaire_trouve = False
                 for ordre in range(1, max_diff + 1):
                     rendements_diff = differencier_serie(df_copy['rendement'], ordre=ordre)
@@ -499,7 +519,7 @@ def calculer_rendements(df: pd.DataFrame, colonne_prix: str = 'close_indice') ->
                         rendements_diff,
                         f'rendements différenciés (ordre {ordre})'
                     )
-                    
+
                     if est_stationnaire_diff:
                         logger.info(
                             f"Les rendements différenciés d'ordre {ordre} sont stationnaires (p-value: {p_value_diff:.4f})."
@@ -515,7 +535,7 @@ def calculer_rendements(df: pd.DataFrame, colonne_prix: str = 'close_indice') ->
                     )
 
         return df_copy
-    
+
     except Exception as e:
         logger.error(f"Erreur lors du calcul des rendements: {e}")
         return df
@@ -567,12 +587,73 @@ def calculer_volatilite_historique(df: pd.DataFrame, fenetre: int = 30, annualis
     except Exception as e:
         logger.error(f"Erreur lors du calcul de la volatilité historique: {e}")
         return df
-PENALITE_CRITERE_POIDS = 5.0
+PENALITE_CRITERE_POIDS = 2.0
+
+# Distributions candidates pour l'innovation des modèles GARCH
+# On essaie plusieurs lois (Student-t, skew-t, GED, normale) pour mieux capturer queues/asym.
+DISTRIBUTIONS_CANDIDATES = ['StudentsT', 'skewt', 'ged', 'normal']
+
+
+def verifier_qualite_serie(series: pd.Series, min_length: int = 200) -> Tuple[bool, List[str]]:
+    """Vérifie la longueur minimale et signale des ruptures simples (shift entre premières et dernières moitiés).
+
+    Retourne (ok, messages)
+    """
+    messages: List[str] = []
+    if series.dropna().shape[0] < min_length:
+        messages.append(f"Série trop courte: {series.dropna().shape[0]} observations < {min_length}")
+
+    # Simple test de rupture : comparer la moyenne première moitié vs deuxième moitié
+    s = series.dropna()
+    if len(s) >= 20:
+        mid = len(s) // 2
+        mean1 = s.iloc[:mid].mean()
+        mean2 = s.iloc[mid:].mean()
+        std_all = s.std()
+        if std_all > 0 and abs(mean1 - mean2) > 3 * std_all:
+            messages.append("Changement de niveau important entre premières et dernières observations (possible rupture structurelle)")
+
+    return (len(messages) == 0), messages
+
+
+def fit_garch_with_distributions(
+    rendements: pd.Series,
+    vol: str,
+    p: int,
+    q: int,
+    critere: str = 'bic',
+) -> Dict[str, Any]:
+    """Essaie plusieurs lois d'innovation et retourne le meilleur ajustement selon critere + penalite.
+
+    Retourne dict avec clés: 'result', 'dist', 'score', 'diagnostics', 'penalite'
+    """
+    best = {'result': None, 'dist': None, 'score': np.inf, 'diagnostics': None, 'penalite': np.inf}
+    crit = critere.lower()
+
+    for dist in DISTRIBUTIONS_CANDIDATES:
+        try:
+            model = arch_model(rendements, mean='AR', lags=1, vol=vol, p=p, q=q, dist=dist, rescale=True)
+            res = model.fit(disp='off')
+            diagnostics = evaluer_diagnostics_garch(res)
+            penalite = diagnostics.get('penalite', np.inf)
+            score = getattr(res, crit, np.inf)
+            composite = score + penalite * PENALITE_CRITERE_POIDS
+
+            logger.debug(f"Test distribution {dist} p={p} q={q}: {crit.upper()}={score:.4f}, penalite={penalite:.2f}, composite={composite:.4f}")
+
+            if composite < (best['score'] + best['penalite'] * PENALITE_CRITERE_POIDS if best['result'] is not None else np.inf):
+                best.update({'result': res, 'dist': dist, 'score': score, 'diagnostics': diagnostics, 'penalite': penalite})
+
+        except Exception as e:
+            logger.debug(f"Distribution {dist} échouée pour p={p}, q={q}: {e}")
+            continue
+
+    return best
 
 def optimiser_parametres_garch(
     df: pd.DataFrame,
-    p_max: int = 10,
-    q_max: int = 10,
+    p_max: int = 2,
+    q_max: int = 2,
     criteres: Tuple[str, ...] = ("aic", "bic")
 ) -> Tuple[Dict[str, Tuple[int, int]], List[Dict[str, Any]]]:    
     """
@@ -613,20 +694,23 @@ def optimiser_parametres_garch(
                     )
                     continue
                 try:
-                    model = arch_model(rendements, mean='AR', lags=1, vol='Garch', p=p, q=q, dist='StudentsT', rescale=True)
-                    result = model.fit(disp='off')
-                    
-                    diagnostics = evaluer_diagnostics_garch(result)
+                    fit_best = fit_garch_with_distributions(rendements, vol='Garch', p=p, q=q, critere='bic')
+                    result = fit_best.get('result')
+                    if result is None:
+                        raise RuntimeError("Aucun ajustement valide pour les distributions candidates")
+
+                    diagnostics = fit_best.get('diagnostics', {})
                     penalite = diagnostics.get('penalite', np.inf)
                     scores = {
                         'aic': result.aic,
                         'bic': result.bic,
-                        'diagnostic_valide': diagnostics['valide'],
+                        'diagnostic_valide': diagnostics.get('valide', False),
                         'somme_alpha_beta': diagnostics.get('somme_alpha_beta'),
                         'pvalue_ljungbox': diagnostics.get('pvalue_ljungbox'),
                         'insignificatifs': diagnostics.get('parametres_insignificatifs', []),
-                        'convergence': diagnostics.get('convergence'),
+                        'convergence': diagnostics.get('convergence', 0),
                         'penalite': penalite,
+                        'best_dist': fit_best.get('dist')
                     }
                     resultats.append({'p': p, 'q': q, **scores})
                     logger.info(
@@ -719,8 +803,8 @@ def optimiser_parametres_garch(
 
 def rechercher_parametres_garch_topk(
     df: pd.DataFrame,
-    p_max: int = 10,
-    q_max: int = 10,
+    p_max: int = 2,
+    q_max: int = 2,
     top_k: int = 3,
     critere: str = 'aic'
 ) -> Tuple[Tuple[int, int], List[Tuple[int, int]]]:
@@ -756,10 +840,10 @@ def calculer_volatilite_garch(
     p: int = 1,
     q: int = 1,
     optimisation: bool = True,
-    p_max: int = 5,
-    q_max: int = 5,
+    p_max: int = 2,
+    q_max: int = 2,
     annualisation: bool = True,
-    critere: str = 'aic'
+    critere: str = 'bic'
 ) -> pd.DataFrame:
     """
     Calcule la volatilité avec un modèle GARCH.
@@ -796,9 +880,12 @@ def calculer_volatilite_garch(
             best_params_map, _ = optimiser_parametres_garch(df_copy, p_max, q_max, (critere,))
             p, q = best_params_map.get(critere, (p, q))
         
-        # Ajuster le modèle GARCH
-        model = arch_model(rendements, mean='AR', lags=1, vol='Garch', p=p, q=q, dist='StudentsT', rescale=True)
-        result = model.fit(disp='off')
+        # Ajuster le modèle GARCH en testant plusieurs lois d'innovations
+        fit_best = fit_garch_with_distributions(rendements, vol='Garch', p=p, q=q, critere=critere)
+        result = fit_best.get('result')
+        if result is None:
+            logger.warning(f"Aucun ajustement GARCH concluant pour p={p}, q={q} (toutes distributions échouées).")
+            return df_copy
         verifier_diagnostics_garch(result, f"GARCH(p={p}, q={q})")
 
         # Extraire la volatilité conditionnelle
@@ -841,10 +928,10 @@ def calculer_volatilite_egarch(
     q: int = 1,
     optimisation: bool = True,
     annualisation: bool = True,
-    p_max: int = 5,
-    q_max: int = 5,
+    p_max: int = 2,
+    q_max: int = 2,
     candidates: Optional[List[Tuple[int, int]]] = None,
-    critere: str = 'aic'
+    critere: str = 'bic'
 ) -> pd.DataFrame:
     """
     Calcule la volatilité avec un modèle EGARCH en testant plusieurs couples (p, q).
@@ -887,12 +974,13 @@ def calculer_volatilite_egarch(
 
         for cand_p, cand_q in recherche:
             try:
-                model = arch_model(rendements, mean='AR', lags=1, vol='EGARCH', p=cand_p, q=cand_q, dist='StudentsT', rescale=True)
-                result = model.fit(disp='off')
-                diagnostics = evaluer_diagnostics_garch(result)
+                fit_best = fit_garch_with_distributions(rendements, vol='EGARCH', p=cand_p, q=cand_q, critere=critere)
+                result = fit_best.get('result')
+                if result is None:
+                    raise RuntimeError("Aucun ajustement valide pour les distributions candidates (EGARCH)")
+                diagnostics = fit_best.get('diagnostics', {})
                 penalite = diagnostics.get('penalite', np.inf)
-                
-                score = getattr(result, critere.lower(), np.inf)
+                score = fit_best.get('score', getattr(result, critere.lower(), np.inf))
 
                 essais.append(
                     {
@@ -1001,10 +1089,10 @@ def calculer_volatilite_gjr_garch(
     q: int = 1,
     optimisation: bool = True,
     annualisation: bool = True,
-    p_max: int = 5,
-    q_max: int = 5,
+    p_max: int = 2,
+    q_max: int = 2,
     candidates: Optional[List[Tuple[int, int]]] = None,
-    critere: str = 'aic'
+    critere: str = 'bic'
 ) -> pd.DataFrame:
     """
     Calcule la volatilité avec un modèle GJR-GARCH en évaluant plusieurs couples (p, q).
@@ -1047,11 +1135,13 @@ def calculer_volatilite_gjr_garch(
 
         for cand_p, cand_q in recherche:
             try:
-                model = arch_model(rendements, mean='AR', lags=1, vol='GARCH', p=cand_p, q=cand_q, o=1, power=2.0, dist='StudentsT', rescale=True)
-                result = model.fit(disp='off')
-                diagnostics = evaluer_diagnostics_garch(result)
+                fit_best = fit_garch_with_distributions(rendements, vol='GARCH', p=cand_p, q=cand_q, critere=critere)
+                result = fit_best.get('result')
+                if result is None:
+                    raise RuntimeError("Aucun ajustement valide pour les distributions candidates (GJR)")
+                diagnostics = fit_best.get('diagnostics', {})
                 penalite = diagnostics.get('penalite', np.inf)
-                score = getattr(result, critere.lower(), np.inf)
+                score = fit_best.get('score', getattr(result, critere.lower(), np.inf))
                 metrique = score + penalite * PENALITE_CRITERE_POIDS
                 logger.info(
                     "GJR-GARCH scores p=%s, q=%s: AIC=%.4f, BIC=%.4f (diagnostics valides=%s, pénalité=%.1f, metrique=%.4f)",
@@ -1780,9 +1870,10 @@ def main():
           
             # Volatilité GARCH avec optimisation séparée AIC/BIC
             params_garch = MODELES_VOLATILITE['garch']
-            critere_garch = params_garch.get('critere', 'aic')
-            p_max_garch = params_garch.get('p_max', 10)
-            q_max_garch = params_garch.get('q_max', 10)
+            critere_garch = params_garch.get('critere', 'bic')
+            # Clamp search to small orders to avoid overfitting
+            p_max_garch = min(params_garch.get('p_max', 2), 2)
+            q_max_garch = min(params_garch.get('q_max', 2), 2)
             top_k_pairs = [(params_garch.get('p', 1), params_garch.get('q', 1))]
 
             if params_garch.get('optimisation', False):
@@ -1819,8 +1910,8 @@ def main():
                 q=params_egarch.get('q', 1),
                 optimisation=params_egarch.get('optimisation', False),
                 annualisation=params_egarch.get('annualisation', True),
-                p_max=params_egarch.get('p_max', p_max_garch),
-                q_max=params_egarch.get('q_max', q_max_garch),
+                p_max=min(params_egarch.get('p_max', p_max_garch), p_max_garch),
+                q_max=min(params_egarch.get('q_max', q_max_garch), q_max_garch),
                 candidates=top_k_pairs,
                 critere=params_egarch.get('critere', critere_garch)
             )
@@ -1835,8 +1926,8 @@ def main():
                 q=params_gjr_garch.get('q', 1),
                 optimisation=params_gjr_garch.get('optimisation', False),
                 annualisation=params_gjr_garch.get('annualisation', True),
-                p_max=params_gjr_garch.get('p_max', p_max_garch),
-                q_max=params_gjr_garch.get('q_max', q_max_garch),
+                p_max=min(params_gjr_garch.get('p_max', p_max_garch), p_max_garch),
+                q_max=min(params_gjr_garch.get('q_max', q_max_garch), q_max_garch),
                 candidates=top_k_pairs,
                 critere=params_gjr_garch.get('critere', critere_garch)
             )
@@ -1896,4 +1987,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    

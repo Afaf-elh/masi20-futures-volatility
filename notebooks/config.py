@@ -93,7 +93,10 @@ MODELES_VOLATILITE = {
         'p': 1,
         'q': 1,
         'optimisation': True,
-        'annualisation': True
+        'annualisation': True,
+        'p_max': 5,
+        'q_max': 5,
+        'top_k': 5
     },
     'egarch': {
         'nom': 'EGARCH',
@@ -101,7 +104,9 @@ MODELES_VOLATILITE = {
         'p': 1,
         'q': 1,
         'optimisation': True,
-        'annualisation': True
+        'annualisation': True,
+        'p_max': 5,
+        'q_max': 5
     },
     'gjr_garch': {
         'nom': 'GJR-GARCH',
@@ -109,7 +114,9 @@ MODELES_VOLATILITE = {
         'p': 1,
         'q': 1,
         'optimisation': True,
-        'annualisation': True
+        'annualisation': True,
+        'p_max': 5,
+        'q_max': 5
     }
 }
 
@@ -129,7 +136,7 @@ SIMULATION_FUTURES = {
     'monte_carlo': {
         'nom': 'Monte Carlo',
         'description': 'Simulation Monte Carlo avec volatilité stochastique',
-        'n_simulations': 1000,
+        'n_simulations': 5000,
         'taux_sans_risque': {
             'maroc': 0.03,
             'vietnam': 0.04,
