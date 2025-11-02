@@ -59,8 +59,18 @@ logger = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore")
 
-tf.config.experimental_run_functions_eagerly(True)
-
+# Désactiver l'exécution eager forcée de TensorFlow afin d'éviter les ralentissements
+# importants observés lors de l'entraînement des modèles LSTM/CNN-LSTM. TensorFlow
+# fonctionne en mode graphe par défaut (beaucoup plus performant) et l'activation de
+# l'exécution eager globale n'est nécessaire que pour le débogage. On laisse la
+# possibilité de la réactiver via la variable d'environnement `TF_EAGER_DEBUG`.
+if os.environ.get("TF_EAGER_DEBUG", "0") == "1":
+    tf.config.experimental_run_functions_eagerly(True)
+    logger.warning(
+        "TensorFlow fonctionne en mode eager explicite (TF_EAGER_DEBUG=1)."
+        " Les performances d'entraînement peuvent en souffrir."
+    )
+    
 # Ajout des chemins manquants dans CHEMINS si nécessaire
 if "visualisations_prediction" not in CHEMINS:
     CHEMINS["visualisations_prediction"] = "visualisations_prediction"

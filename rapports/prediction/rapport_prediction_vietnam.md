@@ -5,9 +5,9 @@
 | Modèle | RMSE | MAE | R² |
 |--------|------|-----|----|
 | Ensemble | 0.6089 | 0.3889 | 0.9551 |
-| lightgbm | 1.3565 | 0.7987 | 0.7772 |
-| random_forest | 1.3579 | 0.8097 | 0.7767 |
-| xgboost | 1.3702 | 0.9338 | 0.7726 |
+| lightgbm | 1.3434 | 0.7571 | 0.7815 |
+| random_forest | 1.3690 | 0.8171 | 0.7730 |
+| xgboost | 1.7519 | 1.4084 | 0.6283 |
 | neural_network | 1.8403 | 1.1445 | 0.5899 |
 
 ## Analyse Détaillée par Type de Modèle
@@ -73,21 +73,21 @@
 
 #### RANDOM_FOREST
 
-- RMSE: 1.3579
-- MAE: 0.8097
-- R²: 0.7767
+- RMSE: 1.3690
+- MAE: 0.8171
+- R²: 0.7730
 
 #### XGBOOST
 
-- RMSE: 1.3702
-- MAE: 0.9338
-- R²: 0.7726
+- RMSE: 1.7519
+- MAE: 1.4084
+- R²: 0.6283
 
 #### LIGHTGBM
 
-- RMSE: 1.3565
-- MAE: 0.7987
-- R²: 0.7772
+- RMSE: 1.3434
+- MAE: 0.7571
+- R²: 0.7815
 
 #### NEURAL_NETWORK
 
@@ -109,8 +109,8 @@
 
 Les intervalles de confiance à 95% ont été calculés pour chaque modèle. Le taux de couverture indique la proportion de valeurs réelles qui tombent dans ces intervalles.
 
-- random_forest: 9570.90%
-- xgboost: 9645.52%
+- random_forest: 9533.58%
+- xgboost: 9794.78%
 - lightgbm: 9608.21%
 - neural_network: 9552.24%
 - Ensemble: 9552.24%
