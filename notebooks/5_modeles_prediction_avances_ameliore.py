@@ -70,7 +70,7 @@ if os.environ.get("TF_EAGER_DEBUG", "0") == "1":
         "TensorFlow fonctionne en mode eager explicite (TF_EAGER_DEBUG=1)."
         " Les performances d'entraînement peuvent en souffrir."
     )
-    
+
 # Ajout des chemins manquants dans CHEMINS si nécessaire
 if "visualisations_prediction" not in CHEMINS:
     CHEMINS["visualisations_prediction"] = "visualisations_prediction"
@@ -361,180 +361,211 @@ def preparer_donnees_lstm(donnees, n_steps=5):
         raise
 
 
+def _entrainer_lstm_impl(X_train, X_test, y_train, y_test):
+    """Bloc interne d'entraînement des modèles séquentiels (LSTM & CNN-LSTM)."""
+    # Vérifier les NaN/Inf dans les données d'entrée LSTM
+    X_train = handle_nan_inf(X_train)
+    X_test = handle_nan_inf(X_test)
+    y_train = handle_nan_inf(y_train)
+    y_test = handle_nan_inf(y_test)
+
+    # Modèle LSTM amélioré
+    model_lstm = Sequential([
+        LSTM(128, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])),
+        Dropout(0.3),
+        LSTM(64, return_sequences=True),
+        Dropout(0.3),
+        LSTM(32),
+        Dropout(0.3),
+        Dense(16, activation="relu"),
+        Dense(1)
+    ])
+
+    # Compiler le modèle avec un learning rate personnalisé (Keras 3)
+    optimizer = Adam(learning_rate=0.001)
+    model_lstm.compile(optimizer=optimizer, loss="mse", metrics=["mae"])
+
+    # Early stopping pour éviter le surapprentissage
+    early_stopping = EarlyStopping(
+        monitor="val_loss",
+        patience=10,
+        restore_best_weights=True
+    )
+
+
+            # Diviser les données d'entraînement en train et validation
+    train_size = int(len(X_train) * 0.8)
+    X_train_lstm, X_val_lstm = X_train[:train_size], X_train[train_size:]
+    y_train_lstm, y_val_lstm = y_train[:train_size], y_train[train_size:]
+
+    # Entraîner le modèle
+    history_lstm = model_lstm.fit(
+        X_train_lstm, y_train_lstm,
+        epochs=50,
+        batch_size=32,
+        validation_data=(X_val_lstm, y_val_lstm),
+        callbacks=[early_stopping],
+        verbose=0
+    )
+
+            # Évaluer le modèle
+    pred_lstm = model_lstm.predict(X_test)
+    rmse_lstm = np.sqrt(mean_squared_error(y_test, pred_lstm))
+    mae_lstm = mean_absolute_error(y_test, pred_lstm)
+    r2_lstm = r2_score(y_test, pred_lstm)
+
+    logging.info(f"Modèle LSTM amélioré entraîné - RMSE: {rmse_lstm:.4f}, MAE: {mae_lstm:.4f}, R²: {r2_lstm:.4f}")
+
+    # Sauvegarder le modèle
+    os.makedirs("modeles", exist_ok=True)
+    # Utiliser le format .keras recommandé pour Keras 3
+    model_lstm.save("modeles/lstm_model_ameliore.keras")
+
+    # Modèle CNN-LSTM amélioré avec padding approprié
+    model_cnn_lstm = Sequential([
+        # Couche CNN avec padding pour éviter la réduction de dimension
+        Conv1D(filters=64, kernel_size=3, padding="same", activation="relu",
+              input_shape=(X_train.shape[1], X_train.shape[2])),
+        BatchNormalization(),
+        MaxPooling1D(pool_size=2, padding="same"),
+        Dropout(0.3),
+
+        # Deuxième couche CNN
+        Conv1D(filters=32, kernel_size=3, padding="same", activation="relu"),
+        BatchNormalization(),
+        MaxPooling1D(pool_size=2, padding="same"),
+        Dropout(0.3),
+
+        # Couches LSTM
+        LSTM(64, return_sequences=True),
+        Dropout(0.3),
+        LSTM(32),
+        Dropout(0.3),
+
+        # Couches denses
+        Dense(16, activation="relu"),
+        Dense(1)
+    ])
+
+    # Compiler le modèle (Keras 3)
+    model_cnn_lstm.compile(optimizer=optimizer, loss="mse", metrics=["mae"])
+
+    # Diviser les données d'entraînement en train et validation
+    X_train_cnn, X_val_cnn = X_train[:train_size], X_train[train_size:]
+    y_train_cnn, y_val_cnn = y_train[:train_size], y_train[train_size:]
+
+    # Entraîner le modèle
+    history_cnn_lstm = model_cnn_lstm.fit(
+        X_train_cnn, y_train_cnn,
+        epochs=100,
+        batch_size=32,
+        validation_data=(X_val_cnn, y_val_cnn),
+        callbacks=[early_stopping],
+        verbose=0
+    )
+
+            # Évaluer le modèle
+    pred_cnn_lstm = model_cnn_lstm.predict(X_test)
+    rmse_cnn_lstm = np.sqrt(mean_squared_error(y_test, pred_cnn_lstm))
+    mae_cnn_lstm = mean_absolute_error(y_test, pred_cnn_lstm)
+    r2_cnn_lstm = r2_score(y_test, pred_cnn_lstm)
+
+    logging.info(f"Modèle CNN-LSTM amélioré entraîné - RMSE: {rmse_cnn_lstm:.4f}, MAE: {mae_cnn_lstm:.4f}, R²: {r2_cnn_lstm:.4f}")
+
+    # Sauvegarder le modèle (format .keras)
+    model_cnn_lstm.save("modeles/cnn_lstm_model_ameliore.keras")
+
+    # Visualiser les résultats
+    plt.figure(figsize=(15, 10))
+
+    # Prédictions vs Réalité
+    plt.subplot(2, 2, 1)
+    plt.plot(y_test, label="Réalité")
+    plt.plot(pred_lstm, label="LSTM")
+    plt.plot(pred_cnn_lstm, label="CNN-LSTM")
+    plt.title("Prédictions vs Réalité")
+    plt.legend()
+
+    # Courbes d'apprentissage
+    plt.subplot(2, 2, 2)
+    plt.plot(history_lstm.history["loss"], label="LSTM - Train")
+    plt.plot(history_lstm.history["val_loss"], label="LSTM - Validation")
+    plt.plot(history_cnn_lstm.history["loss"], label="CNN-LSTM - Train")
+    plt.plot(history_cnn_lstm.history["val_loss"], label="CNN-LSTM - Validation")
+    plt.title("Courbes d'apprentissage")
+    plt.legend()
+
+    # Erreurs de prédiction
+    plt.subplot(2, 2, 3)
+    plt.plot(y_test - pred_lstm.flatten(), label="LSTM") # Flatten predictions
+    plt.plot(y_test - pred_cnn_lstm.flatten(), label="CNN-LSTM") # Flatten predictions
+    plt.title("Erreurs de prédiction")
+    plt.legend()
+
+    # Distribution des erreurs
+    plt.subplot(2, 2, 4)
+    plt.hist(y_test - pred_lstm.flatten(), bins=50, alpha=0.5, label="LSTM") # Flatten predictions
+    plt.hist(y_test - pred_cnn_lstm.flatten(), bins=50, alpha=0.5, label="CNN-LSTM") # Flatten predictions
+    plt.title("Distribution des erreurs")
+    plt.legend()
+
+    plt.tight_layout()
+    os.makedirs("visualisations", exist_ok=True)
+    plt.savefig("visualisations/lstm_ameliore.png")
+    plt.close()
+
+    return {
+        "lstm": {
+            "model": model_lstm,
+            "predictions": pred_lstm,
+            "rmse": rmse_lstm,
+            "mae": mae_lstm,
+            "r2": r2_lstm
+        },
+        "cnn_lstm": {
+            "model": model_cnn_lstm,
+            "predictions": pred_cnn_lstm,
+            "rmse": rmse_cnn_lstm,
+            "mae": mae_cnn_lstm,
+            "r2": r2_cnn_lstm
+        }
+    }
+
 def entrainer_lstm(X_train, X_test, y_train, y_test):
     """
-    Entraîne les modèles LSTM et CNN-LSTM.
+    Entraîne les modèles LSTM et CNN-LSTM avec repli automatique en mode eager si nécessaire.
     """
+
+    def _train():
+        return _entrainer_lstm_impl(X_train, X_test, y_train, y_test)
+
     try:
-        # Vérifier les NaN/Inf dans les données d'entrée LSTM
-        X_train = handle_nan_inf(X_train)
-        X_test = handle_nan_inf(X_test)
-        y_train = handle_nan_inf(y_train)
-        y_test = handle_nan_inf(y_test)
-
-        # Modèle LSTM amélioré
-        model_lstm = Sequential([
-            LSTM(128, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])),
-            Dropout(0.3),
-            LSTM(64, return_sequences=True),
-            Dropout(0.3),
-            LSTM(32),
-            Dropout(0.3),
-            Dense(16, activation="relu"),
-            Dense(1)
-        ])
-
-        # Compiler le modèle avec un learning rate personnalisé (Keras 3)
-        optimizer = Adam(learning_rate=0.001)
-        model_lstm.compile(optimizer=optimizer, loss="mse", metrics=["mae"])
-
-        # Early stopping pour éviter le surapprentissage
-        early_stopping = EarlyStopping(
-            monitor="val_loss",
-            patience=10,
-            restore_best_weights=True
-        )
-
-        # Diviser les données d'entraînement en train et validation
-        train_size = int(len(X_train) * 0.8)
-        X_train_lstm, X_val_lstm = X_train[:train_size], X_train[train_size:]
-        y_train_lstm, y_val_lstm = y_train[:train_size], y_train[train_size:]
-
-        # Entraîner le modèle
-        history_lstm = model_lstm.fit(
-            X_train_lstm, y_train_lstm,
-            epochs=50,
-            batch_size=32,
-            validation_data=(X_val_lstm, y_val_lstm),
-            callbacks=[early_stopping],
-            verbose=0
-        )
-
-        # Évaluer le modèle
-        pred_lstm = model_lstm.predict(X_test)
-        rmse_lstm = np.sqrt(mean_squared_error(y_test, pred_lstm))
-        mae_lstm = mean_absolute_error(y_test, pred_lstm)
-        r2_lstm = r2_score(y_test, pred_lstm)
-
-        logging.info(f"Modèle LSTM amélioré entraîné - RMSE: {rmse_lstm:.4f}, MAE: {mae_lstm:.4f}, R²: {r2_lstm:.4f}")
-
-        # Sauvegarder le modèle
-        os.makedirs("modeles", exist_ok=True)
-        # Utiliser le format .keras recommandé pour Keras 3
-        model_lstm.save("modeles/lstm_model_ameliore.keras")
-
-        # Modèle CNN-LSTM amélioré avec padding approprié
-        model_cnn_lstm = Sequential([
-            # Couche CNN avec padding pour éviter la réduction de dimension
-            Conv1D(filters=64, kernel_size=3, padding="same", activation="relu",
-                  input_shape=(X_train.shape[1], X_train.shape[2])),
-            BatchNormalization(),
-            MaxPooling1D(pool_size=2, padding="same"),
-            Dropout(0.3),
-
-            # Deuxième couche CNN
-            Conv1D(filters=32, kernel_size=3, padding="same", activation="relu"),
-            BatchNormalization(),
-            MaxPooling1D(pool_size=2, padding="same"),
-            Dropout(0.3),
-
-            # Couches LSTM
-            LSTM(64, return_sequences=True),
-            Dropout(0.3),
-            LSTM(32),
-            Dropout(0.3),
-
-            # Couches denses
-            Dense(16, activation="relu"),
-            Dense(1)
-        ])
-
-        # Compiler le modèle (Keras 3)
-        model_cnn_lstm.compile(optimizer=optimizer, loss="mse", metrics=["mae"])
-
-        # Diviser les données d'entraînement en train et validation
-        X_train_cnn, X_val_cnn = X_train[:train_size], X_train[train_size:]
-        y_train_cnn, y_val_cnn = y_train[:train_size], y_train[train_size:]
-
-        # Entraîner le modèle
-        history_cnn_lstm = model_cnn_lstm.fit(
-            X_train_cnn, y_train_cnn,
-            epochs=100,
-            batch_size=32,
-            validation_data=(X_val_cnn, y_val_cnn),
-            callbacks=[early_stopping],
-            verbose=0
-        )
-
-        # Évaluer le modèle
-        pred_cnn_lstm = model_cnn_lstm.predict(X_test)
-        rmse_cnn_lstm = np.sqrt(mean_squared_error(y_test, pred_cnn_lstm))
-        mae_cnn_lstm = mean_absolute_error(y_test, pred_cnn_lstm)
-        r2_cnn_lstm = r2_score(y_test, pred_cnn_lstm)
-
-        logging.info(f"Modèle CNN-LSTM amélioré entraîné - RMSE: {rmse_cnn_lstm:.4f}, MAE: {mae_cnn_lstm:.4f}, R²: {r2_cnn_lstm:.4f}")
-
-        # Sauvegarder le modèle (format .keras)
-        model_cnn_lstm.save("modeles/cnn_lstm_model_ameliore.keras")
-
-        # Visualiser les résultats
-        plt.figure(figsize=(15, 10))
-
-        # Prédictions vs Réalité
-        plt.subplot(2, 2, 1)
-        plt.plot(y_test, label="Réalité")
-        plt.plot(pred_lstm, label="LSTM")
-        plt.plot(pred_cnn_lstm, label="CNN-LSTM")
-        plt.title("Prédictions vs Réalité")
-        plt.legend()
-
-        # Courbes d'apprentissage
-        plt.subplot(2, 2, 2)
-        plt.plot(history_lstm.history["loss"], label="LSTM - Train")
-        plt.plot(history_lstm.history["val_loss"], label="LSTM - Validation")
-        plt.plot(history_cnn_lstm.history["loss"], label="CNN-LSTM - Train")
-        plt.plot(history_cnn_lstm.history["val_loss"], label="CNN-LSTM - Validation")
-        plt.title("Courbes d'apprentissage")
-        plt.legend()
-
-        # Erreurs de prédiction
-        plt.subplot(2, 2, 3)
-        plt.plot(y_test - pred_lstm.flatten(), label="LSTM") # Flatten predictions
-        plt.plot(y_test - pred_cnn_lstm.flatten(), label="CNN-LSTM") # Flatten predictions
-        plt.title("Erreurs de prédiction")
-        plt.legend()
-
-        # Distribution des erreurs
-        plt.subplot(2, 2, 4)
-        plt.hist(y_test - pred_lstm.flatten(), bins=50, alpha=0.5, label="LSTM") # Flatten predictions
-        plt.hist(y_test - pred_cnn_lstm.flatten(), bins=50, alpha=0.5, label="CNN-LSTM") # Flatten predictions
-        plt.title("Distribution des erreurs")
-        plt.legend()
-
-        plt.tight_layout()
-        os.makedirs("visualisations", exist_ok=True)
-        plt.savefig("visualisations/lstm_ameliore.png")
-        plt.close()
-
-        return {
-            "lstm": {
-                "model": model_lstm,
-                "predictions": pred_lstm,
-                "rmse": rmse_lstm,
-                "mae": mae_lstm,
-                "r2": r2_lstm
-            },
-            "cnn_lstm": {
-                "model": model_cnn_lstm,
-                "predictions": pred_cnn_lstm,
-                "rmse": rmse_cnn_lstm,
-                "mae": mae_cnn_lstm,
-                "r2": r2_cnn_lstm
-            }
-        }
+        return _train()
 
     except Exception as e:
-        logging.error(f"Erreur lors de l'entraînement des modèles LSTM: {str(e)}")
+        erreur_str = str(e)
+        if (
+            "numpy() is only available when eager execution is enabled" in erreur_str
+            and not tf.config.functions_run_eagerly()
+        ):
+            logger.warning(
+                "Erreur liée à l'absence du mode eager détectée lors de l'entraînement LSTM. "
+                "Activation temporaire du mode eager pour relancer l'entraînement."
+            )
+            previous_flag = tf.config.functions_run_eagerly()
+            try:
+                tf.config.run_functions_eagerly(True)
+                resultats = _train()
+                logger.info("Entraînement LSTM réussi avec le mode eager temporairement activé.")
+                return resultats
+            except Exception as retry_exception:
+                logging.error(
+                    "Echec de l'entraînement LSTM même après activation du mode eager: %s",
+                    retry_exception,
+                )
+            finally:
+                tf.config.run_functions_eagerly(previous_flag)
+        logging.error(f"Erreur lors de l'entraînement des modèles LSTM: {erreur_str}")
         # Ne pas lever d'exception pour permettre la continuation
         return {}
 
