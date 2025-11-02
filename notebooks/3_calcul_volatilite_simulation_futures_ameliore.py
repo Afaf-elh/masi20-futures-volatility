@@ -613,7 +613,7 @@ def optimiser_parametres_garch(
                     )
                     continue
                 try:
-                    model = arch_model(rendements, vol='Garch', p=p, q=q, rescale=True)
+                    model = arch_model(rendements, mean='AR', lags=1, vol='Garch', p=p, q=q, dist='StudentsT', rescale=True)
                     result = model.fit(disp='off')
                     
                     diagnostics = evaluer_diagnostics_garch(result)
@@ -756,8 +756,8 @@ def calculer_volatilite_garch(
     p: int = 1,
     q: int = 1,
     optimisation: bool = True,
-    p_max: int = 10,
-    q_max: int = 10,
+    p_max: int = 5,
+    q_max: int = 5,
     annualisation: bool = True,
     critere: str = 'aic'
 ) -> pd.DataFrame:
@@ -797,7 +797,7 @@ def calculer_volatilite_garch(
             p, q = best_params_map.get(critere, (p, q))
         
         # Ajuster le modèle GARCH
-        model = arch_model(rendements, vol='Garch', p=p, q=q, rescale=True)
+        model = arch_model(rendements, mean='AR', lags=1, vol='Garch', p=p, q=q, dist='StudentsT', rescale=True)
         result = model.fit(disp='off')
         verifier_diagnostics_garch(result, f"GARCH(p={p}, q={q})")
 
@@ -881,16 +881,19 @@ def calculer_volatilite_egarch(
         meilleur_result = None
         meilleur_score = np.inf
         meilleur_penalite = np.inf
-        meilleur_metrics = np.inf
+        meilleur_metrique = np.inf
         meilleur_params = (p, q)
         essais: List[Dict[str, Any]] = []
 
         for cand_p, cand_q in recherche:
             try:
-                model = arch_model(rendements, vol='EGARCH', p=cand_p, q=cand_q, rescale=True)
+                model = arch_model(rendements, mean='AR', lags=1, vol='EGARCH', p=cand_p, q=cand_q, dist='StudentsT', rescale=True)
                 result = model.fit(disp='off')
                 diagnostics = evaluer_diagnostics_garch(result)
                 penalite = diagnostics.get('penalite', np.inf)
+                
+                score = getattr(result, critere.lower(), np.inf)
+
                 essais.append(
                     {
                         'p': cand_p,
@@ -901,7 +904,6 @@ def calculer_volatilite_egarch(
                         'penalite': penalite,
                     }
                 )
-                score = getattr(result, critere.lower(), np.inf)
                 logger.info(
                     "EGARCH scores p=%s, q=%s: AIC=%.4f, BIC=%.4f (diagnostics valides=%s, pénalité=%.1f)",
                     cand_p,
@@ -1045,7 +1047,7 @@ def calculer_volatilite_gjr_garch(
 
         for cand_p, cand_q in recherche:
             try:
-                model = arch_model(rendements, vol='GARCH', p=cand_p, q=cand_q, o=1, power=2.0, rescale=True)
+                model = arch_model(rendements, mean='AR', lags=1, vol='GARCH', p=cand_p, q=cand_q, o=1, power=2.0, dist='StudentsT', rescale=True)
                 result = model.fit(disp='off')
                 diagnostics = evaluer_diagnostics_garch(result)
                 penalite = diagnostics.get('penalite', np.inf)
@@ -1894,3 +1896,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
