@@ -1,0 +1,137 @@
+# Rapport d'Analyse des Modèles de Prédiction de Volatilité
+
+## Résumé des Performances
+
+| Modèle | RMSE | MAE | R² |
+|--------|------|-----|----|
+| Ensemble | 0.6089 | 0.3889 | 0.9551 |
+| lightgbm | 1.3565 | 0.7987 | 0.7772 |
+| random_forest | 1.3579 | 0.8097 | 0.7767 |
+| xgboost | 1.3702 | 0.9338 | 0.7726 |
+| neural_network | 1.8403 | 1.1445 | 0.5899 |
+
+## Analyse Détaillée par Type de Modèle
+
+### Modèles GARCH
+
+#### GARCH_11
+
+- AIC: 7468.45
+- BIC: 7492.05
+
+#### GARCH_12
+
+- AIC: 7460.25
+- BIC: 7489.76
+
+#### GARCH_21
+
+- AIC: 7470.45
+- BIC: 7499.95
+
+#### EGARCH_11
+
+- AIC: 7496.91
+- BIC: 7520.51
+
+#### EGARCH_12
+
+- AIC: 7485.51
+- BIC: 7515.01
+
+#### EGARCH_21
+
+- AIC: 7498.68
+- BIC: 7528.19
+
+#### EGARCH_T_11
+
+- AIC: 6447.54
+- BIC: 6477.04
+
+#### EGARCH_T_12
+
+- AIC: 6421.26
+- BIC: 6456.67
+
+#### EGARCH_T_21
+
+- AIC: 6391.72
+- BIC: 6427.12
+
+#### GARCH_SKEWT_11
+
+- AIC: 6451.35
+- BIC: 6486.76
+
+#### EGARCH_SKEWT_11
+
+- AIC: 6442.04
+- BIC: 6477.44
+
+### Modèles de Machine Learning
+
+#### RANDOM_FOREST
+
+- RMSE: 1.3579
+- MAE: 0.8097
+- R²: 0.7767
+
+#### XGBOOST
+
+- RMSE: 1.3702
+- MAE: 0.9338
+- R²: 0.7726
+
+#### LIGHTGBM
+
+- RMSE: 1.3565
+- MAE: 0.7987
+- R²: 0.7772
+
+#### NEURAL_NETWORK
+
+- RMSE: 1.8403
+- MAE: 1.1445
+- R²: 0.5899
+
+### Modèles Deep Learning
+
+### Modèle d'Ensemble
+
+#### ENSEMBLE
+
+- RMSE: 0.6089
+- MAE: 0.3889
+- R²: 0.9551
+
+### Analyse des Intervalles de Confiance
+
+Les intervalles de confiance à 95% ont été calculés pour chaque modèle. Le taux de couverture indique la proportion de valeurs réelles qui tombent dans ces intervalles.
+
+- random_forest: 9570.90%
+- xgboost: 9645.52%
+- lightgbm: 9608.21%
+- neural_network: 9552.24%
+- Ensemble: 9552.24%
+
+### Visualisations
+
+Les graphiques suivants ont été générés pour l'analyse des modèles :
+
+1. Prédictions vs Réalité (visualisations/lstm_ameliore.png)
+2. Courbes d'apprentissage (visualisations/lstm_ameliore.png)
+3. Erreurs de prédiction (visualisations/lstm_ameliore.png)
+4. Distribution des erreurs (visualisations/lstm_ameliore.png)
+5. Prédictions vs. Valeurs réelles - Modèle d'ensemble (modeles_prediction/predictions_ensemble.png)
+6. Comparaison interactive des prédictions (visualisations_prediction/{pays}/comparaison_predictions_{pays}.html)
+7. Comparaison interactive des métriques (visualisations_prediction/{pays}/comparaison_metriques_{pays}.html)
+
+### Conclusion
+
+Cette analyse comparative des différents modèles de prédiction de volatilité montre que:
+
+1. Le modèle **Ensemble** a montré les meilleures performances globales avec un RMSE de **0.6089**.
+2. Les modèles GARCH (en particulier EGARCH avec distribution t ou skewt) capturent bien la dynamique de la volatilité.
+3. Les modèles LSTM montrent également de bonnes performances, indiquant leur capacité à capturer les dépendances temporelles.
+4. Les intervalles de confiance fournissent une mesure utile de l'incertitude des prédictions.

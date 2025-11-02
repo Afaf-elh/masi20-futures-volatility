@@ -22,6 +22,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 import xgboost as xgb
 import lightgbm as lgb
+from lightgbm import LGBMRegressor
 from sklearn.svm import SVR
 from sklearn.neural_network import MLPRegressor
 import joblib
@@ -29,9 +30,8 @@ import pickle
 from scipy.stats import norm
 from statsmodels.tsa.arima.model import ARIMA
 import tensorflow as tf
-# Utiliser l'optimiseur legacy pour compatibilité
 from tensorflow import keras
-from keras.optimizers.legacy import Adam
+from keras.optimizers import Adam
 from keras.models import Sequential
 from keras.layers import LSTM, Dense, Dropout, Conv1D, MaxPooling1D, BatchNormalization
 from keras.callbacks import EarlyStopping
@@ -58,6 +58,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore")
+
+tf.config.experimental_run_functions_eagerly(True)
 
 # Ajout des chemins manquants dans CHEMINS si nécessaire
 if "visualisations_prediction" not in CHEMINS:
@@ -166,9 +168,15 @@ def charger_donnees_volatilite(pays):
         return pd.DataFrame()  # Retourner un DataFrame vide en cas d'erreur
 
 def preparer_donnees_modele(df: pd.DataFrame, col_volatilite: str = "volatilite_garch",
-                           horizon_prediction: int = 1) -> Tuple[pd.DataFrame, pd.Series]:
+                           lags: int = 10, horizon_prediction: int = 1) -> Tuple[pd.DataFrame, pd.Series]:
     """
     Prépare les données pour l'entraînement des modèles de prédiction.
+
+    Args:
+        df: DataFrame d'entrée contenant la série de volatilité et autres variables.
+        col_volatilite: Nom de la colonne cible de volatilité.
+        lags: Nombre de retards (lags) à générer comme features.
+        horizon_prediction: Horizon (en pas de temps) pour la prédiction de la cible.
     """
     try:
         # Vérifier si le DataFrame est vide
@@ -385,7 +393,7 @@ def entrainer_lstm(X_train, X_test, y_train, y_test):
         # Entraîner le modèle
         history_lstm = model_lstm.fit(
             X_train_lstm, y_train_lstm,
-            epochs=100,
+            epochs=50,
             batch_size=32,
             validation_data=(X_val_lstm, y_val_lstm),
             callbacks=[early_stopping],
@@ -639,7 +647,7 @@ def entrainer_modeles_ml(X_train, X_test, y_train, y_test):
         try:
             logger.info("Entraînement du modèle random_forest...")
             model_rf = RandomForestRegressor(
-                n_estimators=200,
+                n_estimators=100,
                 max_depth=10,
                 min_samples_split=5,
                 min_samples_leaf=2,
@@ -668,7 +676,7 @@ def entrainer_modeles_ml(X_train, X_test, y_train, y_test):
         try:
             logger.info("Entraînement du modèle xgboost...")
             model_xgb = xgb.XGBRegressor(
-                n_estimators=200,
+                n_estimators=100,
                 max_depth=6,
                 learning_rate=0.01,
                 subsample=0.8,
@@ -696,13 +704,20 @@ def entrainer_modeles_ml(X_train, X_test, y_train, y_test):
         # LightGBM
         try:
             logger.info("Entraînement du modèle lightgbm...")
-            model_lgb = lgb.LGBMRegressor(
-                n_estimators=200,
-                max_depth=6,
-                learning_rate=0.01,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                random_state=42
+            model_lgb = LGBMRegressor(
+            n_estimators=100,
+            learning_rate=0.05,
+            num_leaves=63,                # un peu plus de capacité
+            min_child_samples=10,         # autorise des feuilles plus petites
+            min_split_gain=0.0,           # <= garder un seul alias
+            feature_fraction=0.85,
+            bagging_fraction=0.85,
+            bagging_freq=1,
+            force_col_wise=True,          # stabilise et supprime l’overhead
+            path_smooth=1e-3,             # lisse le calcul du gain → moins de -inf
+            deterministic=True,
+            random_state=42,
+            verbosity=-1 
             )
             model_lgb.fit(X_train, y_train)
             pred_lgb = model_lgb.predict(X_test)
