@@ -4,9 +4,9 @@
 
 | Modèle | RMSE | MAE | R² |
 |--------|------|-----|----|
-| lstm | 0.1313 | 0.0677 | 0.9355 |
+| lstm | 0.1388 | 0.0728 | 0.9279 |
 | Ensemble | 0.3381 | 0.2208 | 0.9710 |
-| cnn_lstm | 0.4828 | 0.4236 | 0.1274 |
+| cnn_lstm | 0.4397 | 0.3407 | 0.2761 |
 | random_forest | 0.7997 | 0.3955 | 0.8378 |
 | lightgbm | 0.8005 | 0.3849 | 0.8374 |
 | neural_network | 1.0934 | 0.5078 | 0.6967 |
@@ -101,15 +101,15 @@
 
 #### LSTM
 
-- RMSE: 0.1313
-- MAE: 0.0677
-- R²: 0.9355
+- RMSE: 0.1388
+- MAE: 0.0728
+- R²: 0.9279
 
 #### CNN_LSTM
 
-- RMSE: 0.4828
-- MAE: 0.4236
-- R²: 0.1274
+- RMSE: 0.4397
+- MAE: 0.3407
+- R²: 0.2761
 
 ### Modèle d'Ensemble
 
@@ -127,8 +127,8 @@ Les intervalles de confiance à 95% ont été calculés pour chaque modèle. Le taux 
 - xgboost: 9807.43%
 - lightgbm: 9793.67%
 - neural_network: 9697.39%
-- lstm: 9807.96%
-- cnn_lstm: 9176.95%
+- lstm: 9780.52%
+- cnn_lstm: 9492.46%
 - Ensemble: 9518.57%
 
 ### Visualisations
@@ -147,7 +147,7 @@ Les graphiques suivants ont été générés pour l'analyse des modèles :
 
 Cette analyse comparative des différents modèles de prédiction de volatilité montre que:
 
-1. Le modèle **lstm** a montré les meilleures performances globales avec un RMSE de **0.1313**.
+1. Le modèle **lstm** a montré les meilleures performances globales avec un RMSE de **0.1388**.
 2. Les modèles GARCH (en particulier EGARCH avec distribution t ou skewt) capturent bien la dynamique de la volatilité.
 3. Les modèles LSTM montrent également de bonnes performances, indiquant leur capacité à capturer les dépendances temporelles.
 4. Les intervalles de confiance fournissent une mesure utile de l'incertitude des prédictions.

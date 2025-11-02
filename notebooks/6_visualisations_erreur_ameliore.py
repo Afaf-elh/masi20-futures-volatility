@@ -34,6 +34,35 @@ logger = logging.getLogger(__name__)
 
 warnings.filterwarnings('ignore')
 
+def sauvegarder_figures(fig, output_dir: str, base_filename: str, pays: str, width: int = 1000, height: int = 600):
+    """
+    Sauvegarde les figures en format HTML et PNG de manière robuste.
+    
+    Args:
+        fig: Figure Plotly à sauvegarder
+        output_dir: Répertoire de sortie
+        base_filename: Nom de base du fichier
+        pays: Code du pays
+        width: Largeur de l'image (défaut: 1000)
+        height: Hauteur de l'image (défaut: 600)
+    """
+    try:
+        # Sauvegarder en HTML (toujours possible)
+        output_file_html = os.path.join(output_dir, f"{base_filename}_{pays}.html")
+        fig.write_html(output_file_html)
+        logger.info(f"Figure HTML sauvegardée: {output_file_html}")
+        
+        # 🔥 CORRECTION : Essayer PNG avec gestion d'erreur
+        try:
+            output_file_png = os.path.join(output_dir, f"{base_filename}_{pays}.png")
+            fig.write_image(output_file_png, width=width, height=height, scale=2)
+            logger.info(f"Figure PNG sauvegardée: {output_file_png}")
+        except Exception as e:
+            logger.warning(f"Impossible de sauvegarder PNG pour {pays}: {e}")
+            
+    except Exception as e:
+        logger.error(f"Erreur sauvegarde figures pour {pays}: {e}")
+        
 def charger_donnees_erreurs(pays: str) -> Optional[pd.DataFrame]:
     """
     Charge les données d'erreurs de prédiction pour un pays.
@@ -59,16 +88,39 @@ def charger_donnees_erreurs(pays: str) -> Optional[pd.DataFrame]:
         df = df.set_index('date')
         df = df.sort_index()
         
-        # Renommer les colonnes pour correspondre aux attentes
-        df.rename(columns={
-            'random_forest': 'erreur_random_forest',
-            'xgboost': 'erreur_xgboost',
-            'lightgbm': 'erreur_lightgbm',
-            'neural_network': 'erreur_neural_network',
-            'Ensemble': 'erreur_ensemble'
-        }, inplace=True)
+        # Vérifier la structure des colonnes et s'adapter
+        colonnes_existantes = df.columns.tolist()
+        logger.info(f"Colonnes disponibles pour {pays}: {colonnes_existantes}")
+        
+        # Mapping des colonnes selon ce qui existe
+        mapping_colonnes = {}
+        
+        # Colonnes d'erreurs
+        noms_modeles = ['random_forest', 'xgboost', 'lightgbm', 'neural_network', 'lstm', 'cnn_lstm', 'Ensemble']
+        for nom in noms_modeles:
+            if nom in colonnes_existantes:
+                mapping_colonnes[nom] = f'erreur_{nom}'
+            
+        # Colonne de volatilité réelle (si elle existe)
+        if 'volatilite_reelle' in colonnes_existantes:
+            mapping_colonnes['volatilite_reelle'] = 'volatilite_reelle'
+        elif 'realized_volatility' in colonnes_existantes:
+            mapping_colonnes['realized_volatility'] = 'volatilite_reelle'
+        elif 'true_volatility' in colonnes_existantes:
+            mapping_colonnes['true_volatility'] = 'volatilite_reelle'
+            
+        # Colonnes de prédictions (si elles existent)
+        for col in colonnes_existantes:
+            if col.startswith('prediction_'):
+                # Garder le même nom sans ajouter un deuxième préfixe
+                mapping_colonnes[col] = col
+        
+        # Appliquer le renommage seulement pour les colonnes qui existent
+        colonnes_a_renommer = {k: v for k, v in mapping_colonnes.items() if k in colonnes_existantes}
+        df.rename(columns=colonnes_a_renommer, inplace=True)
         
         logger.info(f"Données d'erreurs chargées pour {PAYS[pays]['nom']}: {df.shape[0]} lignes x {df.shape[1]} colonnes")
+        logger.info(f"Colonnes après renommage: {df.columns.tolist()}")
         
         return df
     
@@ -146,15 +198,8 @@ def visualiser_distribution_erreurs(df: pd.DataFrame, pays: str) -> None:
         )
         
         # Sauvegarder la figure
-        output_file = os.path.join(output_dir, f"distribution_erreurs_{pays}.html")
-        fig.write_html(output_file)
-        
-        # Créer également une version statique
-        output_file_static = os.path.join(output_dir, f"distribution_erreurs_{pays}.png")
-        fig.write_image(output_file_static, width=1000, height=600, scale=2)
-        
-        logger.info(f"Distribution des erreurs pour {PAYS[pays]['nom']} sauvegardée dans {output_file} et {output_file_static}")
-    
+        sauvegarder_figures(fig, output_dir, "distribution_erreurs", pays)
+
     except Exception as e:
         logger.error(f"Erreur lors de la visualisation de la distribution des erreurs pour {PAYS[pays]['nom']}: {e}")
 
@@ -246,15 +291,8 @@ def visualiser_erreurs_temporelles(df: pd.DataFrame, pays: str) -> None:
         )
         
         # Sauvegarder la figure
-        output_file = os.path.join(output_dir, f"erreurs_temporelles_{pays}.html")
-        fig.write_html(output_file)
-        
-        # Créer également une version statique
-        output_file_static = os.path.join(output_dir, f"erreurs_temporelles_{pays}.png")
-        fig.write_image(output_file_static, width=1000, height=600, scale=2)
-        
-        logger.info(f"Évolution temporelle des erreurs pour {PAYS[pays]['nom']} sauvegardée dans {output_file} et {output_file_static}")
-    
+        sauvegarder_figures(fig, output_dir, "erreurs_temporelles", pays)
+
     except Exception as e:
         logger.error(f"Erreur lors de la visualisation de l'évolution temporelle des erreurs pour {PAYS[pays]['nom']}: {e}")
 
@@ -354,14 +392,8 @@ def visualiser_comparaison_predictions(df: pd.DataFrame, pays: str) -> None:
         )
         
         # Sauvegarder la figure
-        output_file = os.path.join(output_dir, f"comparaison_predictions_{pays}.html")
-        fig.write_html(output_file)
-        
-        # Créer également une version statique
-        output_file_static = os.path.join(output_dir, f"comparaison_predictions_{pays}.png")
-        fig.write_image(output_file_static, width=1000, height=600, scale=2)
-        
-        logger.info(f"Comparaison des prédictions pour {PAYS[pays]['nom']} sauvegardée dans {output_file} et {output_file_static}")
+        sauvegarder_figures(fig, output_dir, "comparaison_predictions", pays)
+
     
     except Exception as e:
         logger.error(f"Erreur lors de la visualisation de la comparaison des prédictions pour {PAYS[pays]['nom']}: {e}")
@@ -446,15 +478,9 @@ def visualiser_metriques_performance(df: pd.DataFrame, pays: str) -> None:
             )
             
             # Sauvegarder la figure
-            output_file = os.path.join(output_dir, f"{metrique.lower()}_{pays}.html")
-            fig.write_html(output_file)
-            
-            # Créer également une version statique
-            output_file_static = os.path.join(output_dir, f"{metrique.lower()}_{pays}.png")
-            fig.write_image(output_file_static, width=900, height=500, scale=2)
-            
-            logger.info(f"{metrique} par modèle pour {PAYS[pays]['nom']} sauvegardé dans {output_file} et {output_file_static}")
-        
+            sauvegarder_figures(fig, output_dir, metrique.lower(), pays, 900, 500)
+
+
         # Créer un tableau récapitulatif
         fig = go.Figure(data=[go.Table(
             header=dict(
@@ -476,10 +502,9 @@ def visualiser_metriques_performance(df: pd.DataFrame, pays: str) -> None:
         )
         
         # Sauvegarder la figure
-        output_file = os.path.join(output_dir, f"tableau_metriques_{pays}.html")
-        fig.write_html(output_file)
+        sauvegarder_figures(fig, output_dir, "tableau_metriques", pays, 900, 400)
         
-        logger.info(f"Tableau des métriques pour {PAYS[pays]['nom']} sauvegardé dans {output_file}")
+        logger.info(f"Tableau des métriques pour {PAYS[pays]['nom']} sauvegardé dans {sauvegarder_figures}")
         logger.info(f"Métriques de performance sauvegardées dans {output_file_csv}")
     
     except Exception as e:
@@ -510,13 +535,11 @@ def main():
             # Visualiser l'évolution temporelle des erreurs
             visualiser_erreurs_temporelles(df, pays)
             
-            # Visualiser la comparaison des prédictions
-            visualiser_comparaison_predictions(df, pays)
-            
-            # Visualiser les métriques de performance
-            visualiser_metriques_performance(df, pays)
-            
-            logger.info(f"Traitement terminé pour {pays}")
+            if 'volatilite_reelle' in df.columns:
+                visualiser_comparaison_predictions(df, pays)
+                visualiser_metriques_performance(df, pays)
+            else:
+                logger.warning(f"Visualisations avancées ignorées pour {pays} (volatilite_reelle manquante)")
         
         logger.info("Traitement terminé pour tous les pays")
     

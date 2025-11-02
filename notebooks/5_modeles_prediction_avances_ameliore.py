@@ -1449,19 +1449,26 @@ def main():
             except Exception as e:
                 logger.warning(f"Erreur lors de la sauvegarde des résultats: {str(e)}")
 
-            # Sauvegarder les erreurs de prédiction pour analyse ultérieure
+            # Sauvegarder les erreurs ET les données complètes pour analyse ultérieure
             try:
-                erreurs_prediction = pd.DataFrame(index=y_test_ml_clean.index)
+                # Créer un DataFrame complet avec erreurs, prédictions et vraies valeurs
+                results_complet = pd.DataFrame(index=y_test_ml_clean.index)
                 
-                # Ajouter les erreurs des modèles ML
+                # Ajouter la volatilité réelle
+                results_complet['volatilite_reelle'] = y_test_ml_clean.values
+                
+                # Ajouter les erreurs et prédictions des modèles ML
                 for nom_modele, res in resultats_ml.items():
                     if "predictions" in res:
                         try:
-                            erreurs_prediction[nom_modele] = y_test_ml_clean.values - res["predictions"]
+                            # Erreurs
+                            results_complet[nom_modele] = y_test_ml_clean.values - res["predictions"]
+                            # Prédictions
+                            results_complet[f'prediction_{nom_modele}'] = res["predictions"]
                         except Exception as e:
-                            logger.warning(f"Erreur lors du calcul des erreurs pour {nom_modele}: {str(e)}")
+                            logger.warning(f"Erreur lors du calcul pour {nom_modele}: {str(e)}")
                 
-                # Ajouter les erreurs des modèles LSTM (dénormalisées)
+                # Ajouter les erreurs et prédictions des modèles LSTM (dénormalisées)
                 for nom_modele in ["lstm", "cnn_lstm"]:
                     if nom_modele in resultats_pays and "predictions" in resultats_pays[nom_modele] and scaler_lstm is not None:
                         try:
@@ -1480,40 +1487,31 @@ def main():
                             # Calculer les erreurs
                             erreurs_lstm = y_true_denorm - pred_denorm
                             
-                            # Ajouter au DataFrame (peut nécessiter un reindex)
-                            try:
-                                # Pour LSTM, créer un nouveau DataFrame aligné
-                                if nom_modele in ["lstm", "cnn_lstm"]:
-                                    # Ajustement précis de l'alignement
-                                    if len(erreurs_lstm) <= len(y_test_ml_clean):
-                                        aligned_index = y_test_ml_clean.index[:len(erreurs_lstm)]
-                                        erreurs_prediction.loc[aligned_index, nom_modele] = erreurs_lstm
-                                    else:
-                                         # Si plus de prédictions que de données test, prendre le début
-                                        aligned_index = y_test_ml_clean.index
-                                        erreurs_prediction.loc[aligned_index, nom_modele] = erreurs_lstm[:len(aligned_index)]
-                                else:
-                                    erreurs_prediction[nom_modele] = y_test_ml_clean.values - res["predictions"]
-                            except Exception as e:
-                                logger.warning(f"Erreur alignement {nom_modele}: {str(e)}")
+                            # Ajouter au DataFrame
+                            if len(erreurs_lstm) <= len(y_test_ml_clean):
+                                aligned_index = y_test_ml_clean.index[:len(erreurs_lstm)]
+                                results_complet.loc[aligned_index, nom_modele] = erreurs_lstm
+                                results_complet.loc[aligned_index, f'prediction_{nom_modele}'] = pred_denorm
+                            
                         except Exception as e:
-                            logger.warning(f"Erreur lors du calcul des erreurs pour {nom_modele}: {str(e)}")
+                            logger.warning(f"Erreur pour {nom_modele}: {str(e)}")
                 
-                # Ajouter les erreurs du modèle d'ensemble
+                # Ajouter les erreurs et prédictions du modèle d'ensemble
                 if "Ensemble" in resultats_ensemble and "predictions" in resultats_ensemble["Ensemble"]:
                     try:
-                        erreurs_prediction["Ensemble"] = y_test_ml_clean.values - resultats_ensemble["Ensemble"]["predictions"]
+                        results_complet["Ensemble"] = y_test_ml_clean.values - resultats_ensemble["Ensemble"]["predictions"]
+                        results_complet['prediction_Ensemble'] = resultats_ensemble["Ensemble"]["predictions"]
                     except Exception as e:
-                        logger.warning(f"Erreur lors du calcul des erreurs pour Ensemble: {str(e)}")
+                        logger.warning(f"Erreur pour Ensemble: {str(e)}")
                 
-                # Sauvegarder les erreurs
-                chemin_erreurs = os.path.join(CHEMINS.get("rapport_final", "rapport_final"), "resultats", f"erreurs_prediction_{pays_key}.csv")
-                erreurs_prediction.to_csv(chemin_erreurs)
-                logger.info(f"Erreurs de prédiction sauvegardées dans {chemin_erreurs}")
+                # Sauvegarder le fichier complet
+                chemin_complet = os.path.join(CHEMINS.get("rapport_final", "rapport_final"), "resultats", f"erreurs_prediction_{pays_key}.csv")
+                results_complet.to_csv(chemin_complet)
+                logger.info(f"Données complètes sauvegardées dans {chemin_complet}")
             
             except Exception as e:
-                logger.warning(f"Erreur lors de la sauvegarde des erreurs de prédiction: {str(e)}")
-
+                logger.warning(f"Erreur lors de la sauvegarde des données complètes: {str(e)}")
+                
         except Exception as e:
             logger.error(f"Erreur lors du traitement du pays {pays_nom}: {str(e)}")
             cleanup_tensorflow()
