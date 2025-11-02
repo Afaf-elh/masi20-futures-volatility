@@ -12,7 +12,7 @@
 * Construire des modèles de prévision avec des techniques de machine learning (Random Forest, XGBoost, LightGBM, MLP, LSTM, CNN‑LSTM) et des approches hybrides combinant économétrie et IA.
 * Évaluer la performance des modèles (MAE, MSE, RMSE, MAPE) et analyser les erreurs de prédiction.
 
-🗃️ **Données**
+🗃️ **Données**  
   Les données sont quotidiennes et couvrent la période 2015–2025 (selon le pays). Elles comprennent :
 
 * Prix de l’indice et prix du contrat future (quand disponible).
@@ -24,11 +24,11 @@
 
 * **Masi20.csv** : 1 287 observations et six colonnes (colonne « Volume » manquante).
 * **VN30.csv** : 2 568 lignes, 16 % de valeurs manquantes dans les colonnes de volume.
-* **Données sud‑africaines et indiennes** : Couvre principalement 2015–2025 avec peu de valeurs manquantes.
+* **Données sud‑africaines et indiennes** : Couvre principalement 2015–2025 avec peu de valeurs manquantes.  
 
   L’exploration recommande d’interpoler les valeurs manquantes, d’harmoniser les formats de date et de convertir toutes les séries à une fréquence quotidienne.
 
-🧠 **Méthodologie**
+🧠 **Méthodologie**  
 **Économétrie**
 
 * Modèles GARCH (GARCH, EGARCH, GJR‑GARCH) pour capturer la dépendance conditionnelle de la volatilité et l’asymétrie.
@@ -62,7 +62,7 @@
 └── ...                                            # Autres dossiers créés à l’exécution (volatilite, analyse_comparative, modeles_prediction)
 ```
 
-⚙️ **Installation**
+⚙️ **Installation**  
 
 1. Cloner le dépôt :
 
@@ -81,7 +81,7 @@ pip install -r requirements.txt
 
   Les principaux packages utilisés sont pandas, numpy, matplotlib, plotly, arch, scikit-learn, xgboost, lightgbm, tensorflow et statsmodels.
 
-▶️ **Exécution du pipeline**
+▶️ **Exécution du pipeline**  
 Le workflow complet est automatisé via le script `notebooks/main.py` qui appelle chaque étape séquentiellement. Pour exécuter une étape manuellement :
 
 ```bash
@@ -102,7 +102,7 @@ python notebooks/5_modeles_prediction_avances_ameliore.py
 
 # 6. Visualisation des erreurs et métriques
 python notebooks/6_visualisations_erreur_ameliore.py
-```
+```  
 
   Les résultats (CSV, images PNG et HTML) seront générés dans les dossiers configurés (data_harmonisee/, volatilite/, analyse_comparative/, modeles_prediction/, rapport_final/visualisations/, etc.). Notez que pour des raisons de taille, ces sorties ne sont pas versionnées dans le dépôt ; elles sont créées lors de l’exécution.
 
@@ -118,9 +118,9 @@ python notebooks/6_visualisations_erreur_ameliore.py
 
 * Intervalles de confiance : Couverture 92-98%, indiquant une bonne estimation de l'incertitude pour trading prudent.
 
-👩‍💻 **Auteure et encadrement**
+👩‍💻 **Auteure et encadrement**  
   Ce projet a été réalisé par Afafe El Hilali dans le cadre d’un mémoire de Master « Finance, Actuariat & Data Science » à l’Université Abdelmalek Essaâdi (2025). L’encadrement scientifique a été assuré par Pr. Mouad El Kharrim en collaboration avec la Bourse de Casablanca.
 
-📄 **Licence**
+📄 **Licence**  
   Le code est diffusé sous licence MIT. Vous êtes libre de l’utiliser, le modifier et le distribuer en citant l’auteure.
 
