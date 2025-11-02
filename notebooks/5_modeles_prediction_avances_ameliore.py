@@ -15,6 +15,7 @@ from arch.univariate import ConstantMean, GARCH, Normal, StudentsT, EGARCH
 from arch.univariate import arch_model
 import warnings
 import logging
+from contextlib import contextmanager
 from typing import Optional, Dict, List, Tuple, Any, Union
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
@@ -75,6 +76,16 @@ if os.environ.get("TF_EAGER_DEBUG", "0") == "1":
 if "visualisations_prediction" not in CHEMINS:
     CHEMINS["visualisations_prediction"] = "visualisations_prediction"
     os.makedirs(CHEMINS["visualisations_prediction"], exist_ok=True)
+
+def cleanup_tensorflow():
+    """Nettoie la mémoire TensorFlow/Keras entre chaque pays pour éviter les fuites mémoire."""
+    import gc
+    try:
+        tf.keras.backend.clear_session()
+        gc.collect()
+        logger.debug("Mémoire TensorFlow/Keras nettoyée avec succès.")
+    except Exception as e:
+        logger.warning(f"Erreur lors du nettoyage de la mémoire TensorFlow: {str(e)}")
 
 # Fonction utilitaire pour gérer NaN et Inf
 def handle_nan_inf(data):
@@ -360,6 +371,40 @@ def preparer_donnees_lstm(donnees, n_steps=5):
         logging.error(f"Erreur lors de la préparation des données LSTM: {str(e)}")
         raise
 
+@contextmanager
+def _temporary_eager_mode():
+    """Active temporairement l'exécution eager pour les conversions nécessaires."""
+    previous_flag = None
+    try:
+        previous_flag = tf.config.functions_run_eagerly()
+    except Exception:
+        previous_flag = None
+
+    need_toggle = previous_flag is False
+
+    if need_toggle:
+        tf.config.run_functions_eagerly(True)
+
+    try:
+        yield
+    finally:
+        if need_toggle:
+            tf.config.run_functions_eagerly(previous_flag)
+
+
+def _to_numpy(array_like):
+    """Convertit en `np.ndarray` sans dépendre du mode eager global."""
+    if isinstance(array_like, np.ndarray):
+        return array_like
+    if isinstance(array_like, list):
+        return np.asarray(array_like)
+    if hasattr(array_like, "numpy"):
+        try:
+            return array_like.numpy()
+        except Exception:
+            pass
+    return np.asarray(array_like)
+
 
 def _entrainer_lstm_impl(X_train, X_test, y_train, y_test):
     """Bloc interne d'entraînement des modèles séquentiels (LSTM & CNN-LSTM)."""
@@ -382,18 +427,19 @@ def _entrainer_lstm_impl(X_train, X_test, y_train, y_test):
     ])
 
     # Compiler le modèle avec un learning rate personnalisé (Keras 3)
-    optimizer = Adam(learning_rate=0.001)
-    model_lstm.compile(optimizer=optimizer, loss="mse", metrics=["mae"])
+    optimizer_lstm = Adam(learning_rate=0.001)  # Optimiseur dédié LSTM
+    model_lstm.compile(optimizer=optimizer_lstm, loss="mse", metrics=["mae"])
 
     # Early stopping pour éviter le surapprentissage
     early_stopping = EarlyStopping(
         monitor="val_loss",
-        patience=10,
-        restore_best_weights=True
+        patience=15,
+        restore_best_weights=True,
+        min_delta=0.001
     )
 
 
-            # Diviser les données d'entraînement en train et validation
+    # Diviser les données d'entraînement en train et validation
     train_size = int(len(X_train) * 0.8)
     X_train_lstm, X_val_lstm = X_train[:train_size], X_train[train_size:]
     y_train_lstm, y_val_lstm = y_train[:train_size], y_train[train_size:]
@@ -401,15 +447,17 @@ def _entrainer_lstm_impl(X_train, X_test, y_train, y_test):
     # Entraîner le modèle
     history_lstm = model_lstm.fit(
         X_train_lstm, y_train_lstm,
-        epochs=50,
-        batch_size=32,
+        epochs=30,
+        batch_size=16,
         validation_data=(X_val_lstm, y_val_lstm),
         callbacks=[early_stopping],
         verbose=0
     )
 
-            # Évaluer le modèle
-    pred_lstm = model_lstm.predict(X_test)
+    # Évaluer le modèle
+    with _temporary_eager_mode():
+        pred_lstm = model_lstm.predict(X_test, verbose=0)
+    pred_lstm = _to_numpy(pred_lstm)
     rmse_lstm = np.sqrt(mean_squared_error(y_test, pred_lstm))
     mae_lstm = mean_absolute_error(y_test, pred_lstm)
     r2_lstm = r2_score(y_test, pred_lstm)
@@ -424,31 +472,35 @@ def _entrainer_lstm_impl(X_train, X_test, y_train, y_test):
     # Modèle CNN-LSTM amélioré avec padding approprié
     model_cnn_lstm = Sequential([
         # Couche CNN avec padding pour éviter la réduction de dimension
-        Conv1D(filters=64, kernel_size=3, padding="same", activation="relu",
+        Conv1D(filters=128, kernel_size=3, padding="same", activation="relu",
               input_shape=(X_train.shape[1], X_train.shape[2])),
         BatchNormalization(),
-        MaxPooling1D(pool_size=2, padding="same"),
-        Dropout(0.3),
+        MaxPooling1D(pool_size=1),
+        Dropout(0.2),
 
-        # Deuxième couche CNN
-        Conv1D(filters=32, kernel_size=3, padding="same", activation="relu"),
+        Conv1D(filters=64, kernel_size=2, padding="same", activation="relu"),
         BatchNormalization(),
-        MaxPooling1D(pool_size=2, padding="same"),
-        Dropout(0.3),
+        MaxPooling1D(pool_size=1),
+        Dropout(0.2),
 
         # Couches LSTM
+        LSTM(128, return_sequences=True),
+        Dropout(0.3),
         LSTM(64, return_sequences=True),
         Dropout(0.3),
         LSTM(32),
-        Dropout(0.3),
+        Dropout(0.2),
 
         # Couches denses
+        Dense(32, activation="relu"),
+        Dropout(0.1),
         Dense(16, activation="relu"),
         Dense(1)
     ])
 
     # Compiler le modèle (Keras 3)
-    model_cnn_lstm.compile(optimizer=optimizer, loss="mse", metrics=["mae"])
+    optimizer_cnn_lstm = Adam(learning_rate=0.001)  # Optimiseur dédié CNN-LSTM  
+    model_cnn_lstm.compile(optimizer=optimizer_cnn_lstm, loss="mse", metrics=["mae"])
 
     # Diviser les données d'entraînement en train et validation
     X_train_cnn, X_val_cnn = X_train[:train_size], X_train[train_size:]
@@ -457,7 +509,7 @@ def _entrainer_lstm_impl(X_train, X_test, y_train, y_test):
     # Entraîner le modèle
     history_cnn_lstm = model_cnn_lstm.fit(
         X_train_cnn, y_train_cnn,
-        epochs=100,
+        epochs=20,
         batch_size=32,
         validation_data=(X_val_cnn, y_val_cnn),
         callbacks=[early_stopping],
@@ -465,7 +517,9 @@ def _entrainer_lstm_impl(X_train, X_test, y_train, y_test):
     )
 
             # Évaluer le modèle
-    pred_cnn_lstm = model_cnn_lstm.predict(X_test)
+    with _temporary_eager_mode():
+        pred_cnn_lstm = model_cnn_lstm.predict(X_test, verbose=0)
+    pred_cnn_lstm = _to_numpy(pred_cnn_lstm)
     rmse_cnn_lstm = np.sqrt(mean_squared_error(y_test, pred_cnn_lstm))
     mae_cnn_lstm = mean_absolute_error(y_test, pred_cnn_lstm)
     r2_cnn_lstm = r2_score(y_test, pred_cnn_lstm)
@@ -1279,6 +1333,7 @@ def main():
     os.makedirs("visualisations", exist_ok=True) # Pour les visualisations LSTM
     os.makedirs(os.path.join(CHEMINS.get("rapport_final", "rapport_final"), "resultats"), exist_ok=True) # Pour les erreurs
 
+    cleanup_tensorflow()
 
     # Définir la colonne de volatilité cible
     col_volatilite_cible = "volatilite_garch" # Ou une autre, ex: "volatilite_egarch"
@@ -1294,10 +1349,12 @@ def main():
         logger.info(f"\n--- Traitement du pays: {pays_nom} ---")
 
         try:
+            cleanup_tensorflow()
             # Charger les données de volatilité
             donnees = charger_donnees_volatilite(pays_key)
             if donnees.empty:
                 logger.warning(f"Données vides pour {pays_nom}. Passage au pays suivant.")
+                cleanup_tensorflow()
                 continue
 
             # Préparer les données pour les modèles ML
@@ -1424,10 +1481,21 @@ def main():
                             erreurs_lstm = y_true_denorm - pred_denorm
                             
                             # Ajouter au DataFrame (peut nécessiter un reindex)
-                            if len(erreurs_lstm) == len(erreurs_prediction):
-                                erreurs_prediction[nom_modele] = erreurs_lstm
-                            else:
-                                logger.warning(f"Dimensions incompatibles pour les erreurs {nom_modele}")
+                            try:
+                                # Pour LSTM, créer un nouveau DataFrame aligné
+                                if nom_modele in ["lstm", "cnn_lstm"]:
+                                    # Ajustement précis de l'alignement
+                                    if len(erreurs_lstm) <= len(y_test_ml_clean):
+                                        aligned_index = y_test_ml_clean.index[:len(erreurs_lstm)]
+                                        erreurs_prediction.loc[aligned_index, nom_modele] = erreurs_lstm
+                                    else:
+                                         # Si plus de prédictions que de données test, prendre le début
+                                        aligned_index = y_test_ml_clean.index
+                                        erreurs_prediction.loc[aligned_index, nom_modele] = erreurs_lstm[:len(aligned_index)]
+                                else:
+                                    erreurs_prediction[nom_modele] = y_test_ml_clean.values - res["predictions"]
+                            except Exception as e:
+                                logger.warning(f"Erreur alignement {nom_modele}: {str(e)}")
                         except Exception as e:
                             logger.warning(f"Erreur lors du calcul des erreurs pour {nom_modele}: {str(e)}")
                 
@@ -1448,7 +1516,7 @@ def main():
 
         except Exception as e:
             logger.error(f"Erreur lors du traitement du pays {pays_nom}: {str(e)}")
-
+            cleanup_tensorflow()
     logger.info("\n--- Traitement de tous les pays terminé ---")
 
 

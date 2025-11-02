@@ -202,7 +202,7 @@ MODELES_ML = {
             'dropout': 0.2,
             'recurrent_dropout': 0.2,
             'activation': 'relu',
-            'epochs': 100,
+            'epochs': 20,
             'batch_size': 32,
             'patience': 10
         },
@@ -225,7 +225,7 @@ MODELES_ML = {
             'dropout': 0.2,
             'recurrent_dropout': 0.2,
             'activation': 'relu',
-            'epochs': 100,
+            'epochs': 20,
             'batch_size': 32,
             'patience': 10
         },

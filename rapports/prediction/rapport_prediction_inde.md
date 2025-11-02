@@ -4,11 +4,13 @@
 
 | Modèle | RMSE | MAE | R² |
 |--------|------|-----|----|
+| lstm | 0.1313 | 0.0677 | 0.9355 |
 | Ensemble | 0.3381 | 0.2208 | 0.9710 |
-| random_forest | 0.7998 | 0.3952 | 0.8377 |
-| lightgbm | 0.8694 | 0.4292 | 0.8083 |
-| xgboost | 0.8921 | 0.5678 | 0.7981 |
+| cnn_lstm | 0.4828 | 0.4236 | 0.1274 |
+| random_forest | 0.7997 | 0.3955 | 0.8378 |
+| lightgbm | 0.8005 | 0.3849 | 0.8374 |
 | neural_network | 1.0934 | 0.5078 | 0.6967 |
+| xgboost | 1.3073 | 1.0472 | 0.5665 |
 
 ## Analyse Détaillée par Type de Modèle
 
@@ -73,21 +75,21 @@
 
 #### RANDOM_FOREST
 
-- RMSE: 0.7998
-- MAE: 0.3952
-- R²: 0.8377
+- RMSE: 0.7997
+- MAE: 0.3955
+- R²: 0.8378
 
 #### XGBOOST
 
-- RMSE: 0.8921
-- MAE: 0.5678
-- R²: 0.7981
+- RMSE: 1.3073
+- MAE: 1.0472
+- R²: 0.5665
 
 #### LIGHTGBM
 
-- RMSE: 0.8694
-- MAE: 0.4292
-- R²: 0.8083
+- RMSE: 0.8005
+- MAE: 0.3849
+- R²: 0.8374
 
 #### NEURAL_NETWORK
 
@@ -96,6 +98,18 @@
 - R²: 0.6967
 
 ### Modèles Deep Learning
+
+#### LSTM
+
+- RMSE: 0.1313
+- MAE: 0.0677
+- R²: 0.9355
+
+#### CNN_LSTM
+
+- RMSE: 0.4828
+- MAE: 0.4236
+- R²: 0.1274
 
 ### Modèle d'Ensemble
 
@@ -110,9 +124,11 @@
 Les intervalles de confiance à 95% ont été calculés pour chaque modèle. Le taux de couverture indique la proportion de valeurs réelles qui tombent dans ces intervalles.
 
 - random_forest: 9724.90%
-- xgboost: 9821.18%
-- lightgbm: 9752.41%
+- xgboost: 9807.43%
+- lightgbm: 9793.67%
 - neural_network: 9697.39%
+- lstm: 9807.96%
+- cnn_lstm: 9176.95%
 - Ensemble: 9518.57%
 
 ### Visualisations
@@ -131,7 +147,7 @@ Les graphiques suivants ont été générés pour l'analyse des modèles :
 
 Cette analyse comparative des différents modèles de prédiction de volatilité montre que:
 
-1. Le modèle **Ensemble** a montré les meilleures performances globales avec un RMSE de **0.3381**.
+1. Le modèle **lstm** a montré les meilleures performances globales avec un RMSE de **0.1313**.
 2. Les modèles GARCH (en particulier EGARCH avec distribution t ou skewt) capturent bien la dynamique de la volatilité.
 3. Les modèles LSTM montrent également de bonnes performances, indiquant leur capacité à capturer les dépendances temporelles.
 4. Les intervalles de confiance fournissent une mesure utile de l'incertitude des prédictions.
