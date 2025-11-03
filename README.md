@@ -1,52 +1,84 @@
-# Prévision de la Volatilité des Contrats Futures sur MASI20
+# Prévision de la Volatilité des Contrats Futures sur MASI20 - Approche Hybride
 
-📖 **Aperçu du projet**  
-  Ce dépôt présente une étude de prévision de la volatilité des contrats à terme sur l’indice MASI20 de la Bourse de Casablanca. Le marché des dérivés marocain étant encore récent, ce projet explore des méthodes de finance quantitative, d’économétrie et d’intelligence artificielle pour proposer un cadre complet de modélisation et d’anticipation de la volatilité. L’analyse inclut également des comparaisons avec d’autres places financières (Vietnam, Afrique du Sud, Inde) pour situer le Maroc par rapport aux marchés frontières et émergents.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
-💡 **Objectifs**
+## 📖 Aperçu du Projet
 
-* Préparer et harmoniser les données financières et macroéconomiques pour les marchés marocain, vietnamien, sud‑africain et indien.
-* Analyser la volatilité des indices et des contrats futures via des modèles économétriques (GARCH, EGARCH, GJR‑GARCH) et des approches historiques.
-* Simuler des prix de futures (méthode du coût de portage et simulation de volatilité stochastique).
-* Comparer la dynamique de volatilité entre pays (corrélations dynamiques, contagion, distances).
-* Construire des modèles de prévision avec des techniques de machine learning (Random Forest, XGBoost, LightGBM, MLP, LSTM, CNN‑LSTM) et des approches hybrides combinant économétrie et IA.
-* Évaluer la performance des modèles (MAE, MSE, RMSE, MAPE) et analyser les erreurs de prédiction.
+Cette étude propose une **approche hybride** pour la prévision de la volatilité des contrats à terme sur l'indice **MASI20** de la **Bourse de Casablanca**. En combinant modèles économétriques traditionnels (GARCH) et techniques avancées d'apprentissage automatique (LSTM, XGBoost), ce travail fournit un cadre prédictif adapté aux spécificités du marché marocain, tout en offrant une analyse comparative avec d'autres marchés émergents et frontières.
 
-🗃️ **Données**  
-  Les données sont quotidiennes et couvrent la période 2015–2025 (selon le pays). Elles comprennent :
+### 🌍 Marchés Étudiés
 
-* Prix de l’indice et prix du contrat future (quand disponible).
-* Volumes négociés, taux sans risque, dividendes, taux de change, etc.
-* Variables macroéconomiques (inflation, PIB) pour enrichir les modèles IA.
-  Le rapport d’exploration (rapport_final/rapport_exploration.md) fournit un aperçu des fichiers.
+**Marchés Émergents :**
+- **Inde** (Nifty 50) : 2015-01-01 à 2024-12-31
+- **Afrique du Sud** (JSE Top 40) : 2015-01-01 à 2024-12-31
 
-### Exemple de Fichiers :
+**Marchés Frontières :**
+- **Maroc** (MASI20) : 2020-01-01 à 2024-12-31
+- **Vietnam** (VN30) : 2017-01-01 à 2024-12-31
 
-* **Masi20.csv** : 1 287 observations et six colonnes (colonne « Volume » manquante).
-* **VN30.csv** : 2 568 lignes, 16 % de valeurs manquantes dans les colonnes de volume.
-* **Données sud‑africaines et indiennes** : Couvre principalement 2015–2025 avec peu de valeurs manquantes.  
+*Justification : Les périodes d'étude reflètent la disponibilité des données liée au lancement des marchés à terme. Le marché marocain des futures sur le MASI20 étant récent, les données commencent en 2020.*
 
-  L’exploration recommande d’interpoler les valeurs manquantes, d’harmoniser les formats de date et de convertir toutes les séries à une fréquence quotidienne.
+## 🎯 Objectifs
 
-🧠 **Méthodologie**  
-**Économétrie**
+- Préparer et harmoniser les données financières pour 4 marchés (Maroc, Vietnam, Afrique du Sud, Inde)
+- Analyser la volatilité via modèles économétriques (GARCH, EGARCH, GJR-GARCH)
+- Simuler les prix de futures (Cost of Carry, Convenience Yield, Monte Carlo)
+- Comparer les dynamiques de volatilité entre marchés (corrélations, contagion, clustering)
+- Développer des modèles de prévision hybrides combinant économétrie et apprentissage automatique
+- Évaluer la performance des modèles (RMSE, R², intervalles de confiance)
 
-* Modèles GARCH (GARCH, EGARCH, GJR‑GARCH) pour capturer la dépendance conditionnelle de la volatilité et l’asymétrie.
-* Sélection automatique des ordres p/q via AIC/BIC et choix de la distribution des innovations (normale, Student‑t, Skew‑t, GED).
-* Décomposition de la volatilité réalisée pour valider les faits stylisés.
+## 📊 Résultats Clés
 
-**Machine Learning et Deep Learning**
+### 🏆 Performance des Modèles
 
-* Modèles supervisés : Random Forest, XGBoost, LightGBM, Support Vector Regression, MLP.
-* Réseaux récurrents et convolutifs : LSTM et CNN‑LSTM pour capturer les non‑linéarités et mémoires longues.
-* Modèle hybride : les résidus des modèles GARCH alimentent les modèles IA, et les prédictions sont combinées via un modèle d’ensemble.
+| **Pays** | **LSTM (RMSE)** | **LightGBM (RMSE)** | **Random Forest (RMSE)** |
+|----------|-----------------|---------------------|--------------------------|
+| **Maroc** | **0.1089** | 0.8416 | 0.8014 |
+| **Vietnam** | **0.1277** | 1.3434 | 1.3690 |
+| **Afrique du Sud** | **0.1123** | 0.7352 | 0.7492 |
+| **Inde** | **0.1313** | 0.8005 | 0.7997 |
 
-**Analyse comparative et simulation**
+**Contextualisation RMSE :** Avec une volatilité quotidienne généralement entre 0,5% et 3%, un RMSE de **0,1089** pour le Maroc indique une erreur moyenne de seulement **~0,11 point de pourcentage**, démontrant une précision exceptionnelle des modèles LSTM.
 
-* Simulation de futures selon le modèle du coût de portage et par Monte‑Carlo avec volatilité stochastique.
-* Comparaison inter‑pays : corrélations dynamiques, matrices de contagion (probabilités conditionnelles de volatilité élevée), distances et regroupement hiérarchique.
+### 📈 Principales Conclusions
 
-📁 **Structure du dépôt**
+- **Supériorité des LSTM** : Dominance dans tous les pays avec RMSE très bas (0.1089-0.1313) et R² élevés (87.46%-95.78%)
+- **Meilleur modèle GARCH** : EGARCH avec distribution t (EGARCH-t-21) dans tous les pays
+- **Approche hybride** : Performances globales supérieures en combinant économétrie et IA
+- **Similitudes structurelles** entre Maroc et Vietnam (marchés frontières)
+- **Différences notables** avec marchés émergents (Inde, Afrique du Sud) liées à la liquidité et profondeur de marché
+
+## 🗂️ Données
+
+Données quotidiennes 2015-2024 provenant de sources financières reconnues (Yahoo Finance, TradingView, Trading Economics) :
+
+- **Prix des indices** et contrats futures (quand disponibles)
+- **Variables financières** : taux sans risque, dividendes, volumes
+- **Prétraitement** : Standardisation, rééchantillonnage quotidien, gestion valeurs manquantes
+
+### Cas Spécial Maroc (MASI20)
+Les données futures sont calculées analytiquement via le modèle **Cost of Carry** :F = S × e^( (r - q) × T )
+avec calcul des échéances selon règles AMMC (3ème vendredi mars, juin, septembre, décembre)
+
+## 🧮 Méthodologie
+
+### 📐 Économétrie Financière
+- **GARCH/EGARCH/GJR-GARCH** avec sélection automatique des paramètres (BIC)
+- Tests de stationnarité et validation (Durbin-Watson)
+- Distributions : Normale, Student-t, GED
+
+### 🤖 Apprentissage Automatique
+- **Random Forest, XGBoost, LightGBM** pour comparaison
+- **LSTM** pour capture des dépendances temporelles longues
+- **Modèles hybrides** combinant résidus GARCH et prédictions IA
+
+### 📊 Analyse Comparative
+- **Corrélations dynamiques** (fenêtre 60 jours)
+- **Analyse de contagion** (seuil 95ème percentile)
+- **Clustering** par distance euclidienne
+
+## 🗂️ Structure du Dépôt
 
 ```plaintext
 ├── notebooks/
